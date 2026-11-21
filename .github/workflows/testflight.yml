@@ -1,0 +1,206 @@
+name: TestFlight
+
+# main に push するか、Actions 画面から手動で実行するとビルドする（LifeLog の testflight.yml を元にした。2026-11-21）。
+# 毎回、署名なしの IPA を成果物に残す。Apple Developer Program の Secrets が揃っていて、
+# App Store Connect にアプリ（com.off53jub.gohan）が作ってあれば、TestFlight にも上げる。
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  # 決め方（食事のまとめ方・お店の点数・Claude の答えの読み方）をシミュレーターで確かめる
+  test:
+    runs-on: macos-26
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Swift の組み立ての前の検査
+        run: python3 .github/scripts/swift_precheck.py
+
+      - name: Xcode を選ぶ
+        run: |
+          sudo xcode-select -s "$(ls -d /Applications/Xcode_26*.app | sort -V | tail -1)"
+          xcodebuild -version
+
+      - name: プロジェクトを生成
+        run: |
+          brew install xcodegen
+          xcodegen generate
+
+      - name: テストする
+        run: |
+          udid=$(xcrun simctl list devices available | grep -m1 -E "^[[:space:]]+iPhone" | grep -oE "[0-9A-F]{8}-([0-9A-F]{4}-){3}[0-9A-F]{12}")
+          echo "シミュレーター: $udid"
+          set +e
+          xcodebuild test \
+            -project Gohan.xcodeproj -scheme Gohan \
+            -destination "id=$udid" \
+            CODE_SIGNING_ALLOWED=NO 2>&1 | tee "$RUNNER_TEMP/test.log"
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            grep -E "error:|failed|XCTAssert" "$RUNNER_TEMP/test.log" | sort -u | head -40 | while IFS= read -r line; do echo "::error::${line}"; done
+          fi
+          exit $status
+
+  build:
+    runs-on: macos-26
+    timeout-minutes: 80
+    permissions:
+      contents: write
+    env:
+      HAS_ASC: ${{ secrets.ASC_KEY_ID != '' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Swift の組み立ての前の検査
+        run: python3 .github/scripts/swift_precheck.py
+
+      - name: Xcode を選ぶ
+        run: |
+          sudo xcode-select -s "$(ls -d /Applications/Xcode_26*.app | sort -V | tail -1)"
+          xcodebuild -version
+
+      - name: プロジェクトを生成
+        run: |
+          brew install xcodegen
+          xcodegen generate
+
+      - name: App Store Connect の API キーを置く
+        if: env.HAS_ASC == 'true'
+        env:
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/asc"
+          body=$(printf '%s' "$ASC_KEY_P8" | tr -d '\r' | sed -e 's/-----BEGIN PRIVATE KEY-----//' -e 's/-----END PRIVATE KEY-----//' | tr -d ' \n\t')
+          {
+            echo "-----BEGIN PRIVATE KEY-----"
+            printf '%s' "$body" | fold -w 64
+            echo
+            echo "-----END PRIVATE KEY-----"
+          } > "$RUNNER_TEMP/asc/key.p8"
+          if openssl pkey -in "$RUNNER_TEMP/asc/key.p8" -noout 2>/dev/null; then
+            echo "API キーは鍵として読めました（${#body} 文字）"
+          else
+            echo "::warning::ASC_KEY_P8 が鍵として読めません（${#body} 文字）。今回は TestFlight に送らず、署名なしの IPA だけ作ります"
+            echo "ASC_UNUSABLE=true" >> "$GITHUB_ENV"
+          fi
+
+      - name: 使い終わった開発用の証明書を片づける
+        if: env.HAS_ASC == 'true' && env.ASC_UNUSABLE != 'true'
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          python3 -m venv "$RUNNER_TEMP/ascpy"
+          "$RUNNER_TEMP/ascpy/bin/pip" install --quiet pyjwt cryptography requests
+          ASC_KEY_PATH="$RUNNER_TEMP/asc/key.p8" "$RUNNER_TEMP/ascpy/bin/python" .github/scripts/asc.py cleanup-certs || echo "::warning::証明書を片づけられませんでした"
+          ASC_KEY_PATH="$RUNNER_TEMP/asc/key.p8" "$RUNNER_TEMP/ascpy/bin/python" .github/scripts/asc.py has-app || echo "::warning::アプリがあるか確かめられませんでした"
+
+      - name: アーカイブ
+        env:
+          TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set +e
+          archive() {
+            rm -rf "$RUNNER_TEMP/Gohan.xcarchive"
+            xcodebuild archive \
+              -project Gohan.xcodeproj -scheme Gohan \
+              -destination 'generic/platform=iOS' \
+              -archivePath "$RUNNER_TEMP/Gohan.xcarchive" \
+              DEVELOPMENT_TEAM="$TEAM_ID" \
+              CURRENT_PROJECT_VERSION="${{ github.run_number }}" \
+              "$@" 2>&1 | tee -a "$RUNNER_TEMP/build.log"
+            return ${PIPESTATUS[0]}
+          }
+          : > "$RUNNER_TEMP/build.log"
+          if [ "$HAS_ASC" = "true" ] && [ "$ASC_UNUSABLE" != "true" ]; then
+            sign=(-allowProvisioningUpdates
+                  -authenticationKeyPath "$RUNNER_TEMP/asc/key.p8"
+                  -authenticationKeyID "${{ secrets.ASC_KEY_ID }}"
+                  -authenticationKeyIssuerID "${{ secrets.ASC_ISSUER_ID }}"
+                  CODE_SIGN_STYLE=Automatic)
+            archive "${sign[@]}"
+            status=$?
+            if [ "$status" -ne 0 ] && grep -q "Provisioning Profiles" "$RUNNER_TEMP/build.log"; then
+              echo "::notice::署名のプロファイルが間に合わなかったので、もう一度アーカイブします"
+              archive "${sign[@]}"
+              status=$?
+            fi
+            if [ "$status" -ne 0 ]; then
+              grep -E "error:" "$RUNNER_TEMP/build.log" | sort -u | head -20 | while IFS= read -r line; do echo "::warning::${line}"; done
+              echo "::warning::署名つきで作れなかったので、署名なしで作ります（今回は TestFlight に送りません）"
+              echo "ASC_UNUSABLE=true" >> "$GITHUB_ENV"
+              : > "$RUNNER_TEMP/build.log"
+              archive CODE_SIGNING_ALLOWED=NO
+              status=$?
+            fi
+          else
+            archive CODE_SIGNING_ALLOWED=NO
+            status=$?
+          fi
+          if [ "$status" -ne 0 ]; then
+            grep -E "error:" "$RUNNER_TEMP/build.log" | sort -u | head -40 | while IFS= read -r line; do echo "::error::${line}"; done
+          fi
+          exit $status
+
+      - name: 署名なしの IPA を作る
+        run: |
+          mkdir -p "$RUNNER_TEMP/ipa/Payload"
+          cp -R "$RUNNER_TEMP/Gohan.xcarchive/Products/Applications/Gohan.app" "$RUNNER_TEMP/ipa/Payload/"
+          (cd "$RUNNER_TEMP/ipa" && zip -qry Gohan-unsigned.ipa Payload)
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Gohan-unsigned-ipa
+          path: ${{ runner.temp }}/ipa/Gohan-unsigned.ipa
+          retention-days: 30
+
+      - name: リリースに残す
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="v$(TZ=Asia/Tokyo date +%Y.%m.%d)-${{ github.run_number }}"
+          gh release create "$tag" "$RUNNER_TEMP/ipa/Gohan-unsigned.ipa" \
+            --repo "${{ github.repository }}" --target "${{ github.sha }}" --title "$tag" --generate-notes
+          echo "::notice::リリース $tag に IPA を残しました"
+
+      - name: 署名して TestFlight にアップロード
+        if: env.HAS_ASC == 'true' && env.ASC_UNUSABLE != 'true'
+        env:
+          TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          sed "s/TEAM_ID_PLACEHOLDER/$TEAM_ID/" ExportOptions.plist > "$RUNNER_TEMP/ExportOptions.plist"
+          xcodebuild -exportArchive \
+            -archivePath "$RUNNER_TEMP/Gohan.xcarchive" \
+            -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist" \
+            -exportPath "$RUNNER_TEMP/export" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$RUNNER_TEMP/asc/key.p8" \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID"
+
+      # 送れても Apple の受け付けの検査で弾かれることがあるので、結果を待つ。main のときは内部テストのグループに渡す
+      - name: Apple の受け付け結果を待つ
+        if: env.HAS_ASC == 'true' && env.ASC_UNUSABLE != 'true'
+        timeout-minutes: 40
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: ASC_KEY_PATH="$RUNNER_TEMP/asc/key.p8" "$RUNNER_TEMP/ascpy/bin/python" .github/scripts/asc.py wait-upload "${{ github.run_number }}"
+
+      - name: この CI で作った証明書を片づける
+        if: always() && env.HAS_ASC == 'true'
+        continue-on-error: true
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          [ -x "$RUNNER_TEMP/ascpy/bin/python" ] || exit 0
+          [ -f "$RUNNER_TEMP/asc/key.p8" ] || exit 0
+          ASC_KEY_PATH="$RUNNER_TEMP/asc/key.p8" "$RUNNER_TEMP/ascpy/bin/python" .github/scripts/asc.py revoke-own-cert
