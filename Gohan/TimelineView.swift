@@ -24,7 +24,7 @@ struct TimelineView: View {
                         }
                     }
                 }
-                ForEach(days, id: \.day) { group in
+                ForEach(days) { group in
                     Section(Self.dayTitle(group.day)) {
                         ForEach(group.meals) { meal in
                             NavigationLink(value: meal) { MealRow(meal: meal) }
@@ -45,15 +45,21 @@ struct TimelineView: View {
         }
     }
 
-    private var days: [(day: Date, meals: [Meal])] {
+    struct DayGroup: Identifiable {
+        let day: Date
+        var meals: [Meal]
+        var id: Date { day }
+    }
+
+    private var days: [DayGroup] {
         let calendar = Calendar.current
-        var out: [(day: Date, meals: [Meal])] = []
+        var out: [DayGroup] = []
         for meal in meals {
             let day = calendar.startOfDay(for: meal.date)
             if out.last?.day == day {
                 out[out.count - 1].meals.append(meal)
             } else {
-                out.append((day, [meal]))
+                out.append(DayGroup(day: day, meals: [meal]))
             }
         }
         return out

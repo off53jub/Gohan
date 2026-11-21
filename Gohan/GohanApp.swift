@@ -6,6 +6,8 @@ struct GohanApp: App {
     let container: ModelContainer
 
     init() {
+        // 初回は保存先のフォルダが無く、CoreData が「見つからない」と記録に出す（CI のテストで見えた）。先に作っておく
+        try? FileManager.default.createDirectory(at: URL.applicationSupportDirectory, withIntermediateDirectories: true)
         do {
             container = try ModelContainer(for: Meal.self, Place.self)
         } catch {
