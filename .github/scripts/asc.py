@@ -167,7 +167,7 @@ def wait_upload(number: str) -> None:
                     print(f"::warning::Apple からの注意（ITMS-{w.get('code')}）: {w.get('description')}")
                 print("Apple が受け付けました")
                 on_main = os.environ.get("GITHUB_REF") == "refs/heads/main" \
-                    and os.environ.get("GITHUB_EVENT_NAME") in ("push", "workflow_dispatch")
+                    and os.environ.get("GITHUB_EVENT_NAME") in ("push", "workflow_dispatch", "schedule")
                 if on_main:
                     give_to_testers(app, number)
                 else:

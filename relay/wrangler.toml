@@ -1,0 +1,12 @@
+name = "gohan-relay"
+main = "worker.js"
+compatibility_date = "2026-11-01"
+
+[vars]
+# 月の上限（ドル）
+CAP_USD = "10"
+
+# KV は `npx wrangler kv namespace create SPEND` で作り、出てきた id をここに書く
+[[kv_namespaces]]
+binding = "SPEND"
+id = "ここに KV の id"

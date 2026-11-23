@@ -46,7 +46,9 @@ enum PlaceFinder {
             category: item.pointOfInterestCategory?.rawValue ?? "",
             latitude: coordinate.latitude,
             longitude: coordinate.longitude,
-            distance: distance
+            distance: distance,
+            phone: item.phoneNumber ?? "",
+            url: item.url?.absoluteString ?? ""
         )
     }
 
@@ -59,11 +61,63 @@ enum PlaceFinder {
 
     /// 近くの地名（「新宿」「渋谷区道玄坂」など）
     static func area(latitude: Double, longitude: Double) async -> String {
+        await areaAndRegion(latitude: latitude, longitude: longitude).area
+    }
+
+    /// 近くの地名と、都道府県（旅行のまとまりに使う）
+    static func areaAndRegion(latitude: Double, longitude: Double) async -> (area: String, region: String) {
         let location = CLLocation(latitude: latitude, longitude: longitude)
         guard let mark = try? await CLGeocoder().reverseGeocodeLocation(location, preferredLocale: Locale(identifier: "ja_JP")).first else {
-            return ""
+            return ("", "")
         }
-        return mark.subLocality ?? mark.locality ?? mark.administrativeArea ?? ""
+        return (mark.subLocality ?? mark.locality ?? mark.administrativeArea ?? "", mark.administrativeArea ?? "")
+    }
+
+    /// まだマップに出てくるか（閉店したかも、を見る。便47）。分からないときは nil
+    static func stillThere(name: String, latitude: Double, longitude: Double) async -> Bool? {
+        let center = CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
+        let request = MKLocalSearch.Request()
+        request.naturalLanguageQuery = name
+        request.region = MKCoordinateRegion(center: center, latitudinalMeters: 600, longitudinalMeters: 600)
+        request.resultTypes = .pointOfInterest
+        do {
+            let response = try await MKLocalSearch(request: request).start()
+            return response.mapItems.contains { item in
+                guard let n = item.name else { return false }
+                let c = item.placemark.coordinate
+                return Matcher.similarity(n, name) >= 0.6 && Matcher.distance(latitude, longitude, c.latitude, c.longitude) <= 300
+            }
+        } catch let error as MKError where error.code == .placemarkNotFound {
+            return false
+        } catch {
+            return nil
+        }
+    }
+
+    /// 電話番号をあとから調べる（前の版で保存したお店には無い）
+    static func phone(name: String, latitude: Double, longitude: Double) async -> String? {
+        let results = await search(name, latitude: latitude, longitude: longitude, radius: 300)
+        return results.first { Matcher.similarity($0.name, name) >= 0.6 && !$0.phone.isEmpty }?.phone
+    }
+
+    /// 道を見る（歩き。便45）
+    static func directions(name: String, latitude: Double, longitude: Double) {
+        let item = MKMapItem(placemark: MKPlacemark(coordinate: CLLocationCoordinate2D(latitude: latitude, longitude: longitude)))
+        item.name = name
+        item.openInMaps(launchOptions: [MKLaunchOptionsDirectionsModeKey: MKLaunchOptionsDirectionsModeWalking])
+    }
+
+    /// 食べログ・Google マップで開く（便46）
+    static func tabelogURL(name: String) -> URL? {
+        var c = URLComponents(string: "https://tabelog.com/rstLst/")
+        c?.queryItems = [URLQueryItem(name: "sw", value: name)]
+        return c?.url
+    }
+
+    static func googleMapsURL(name: String, address: String) -> URL? {
+        var c = URLComponents(string: "https://www.google.com/maps/search/")
+        c?.queryItems = [URLQueryItem(name: "api", value: "1"), URLQueryItem(name: "query", value: name + " " + address)]
+        return c?.url
     }
 
     /// 候補を1つにまとめる（同じお店が別の探し方で2回出たとき）

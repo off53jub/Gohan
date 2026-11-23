@@ -1,4 +1,6 @@
+import AVFoundation
 import Foundation
+import ImageIO
 import Photos
 import UIKit
 import Vision
@@ -27,6 +29,43 @@ enum PhotoLoader {
                 cont.resume(returning: image)
             }
         }
+    }
+
+    /// 動画の1コマ（便21。真ん中あたり）
+    static func videoFrame(_ asset: PHAsset, side: CGFloat) async -> UIImage? {
+        let options = PHVideoRequestOptions()
+        options.isNetworkAccessAllowed = true
+        options.deliveryMode = .fastFormat
+        let avAsset: AVAsset? = await withCheckedContinuation { (cont: CheckedContinuation<AVAsset?, Never>) in
+            PHImageManager.default().requestAVAsset(forVideo: asset, options: options) { avAsset, _, _ in
+                cont.resume(returning: avAsset)
+            }
+        }
+        guard let avAsset else { return nil }
+        let generator = AVAssetImageGenerator(asset: avAsset)
+        generator.appliesPreferredTrackTransform = true
+        generator.maximumSize = CGSize(width: side, height: side)
+        let time = CMTime(seconds: max(0, asset.duration / 2), preferredTimescale: 600)
+        guard let frame = try? await generator.image(at: time) else { return nil }
+        return UIImage(cgImage: frame.image)
+    }
+
+    /// カメラで撮った写真か（カメラの名前が写真に書いてあるか。便22）。読めないときは「撮った」とみなす
+    static func isCameraPhoto(_ asset: PHAsset) async -> Bool {
+        let options = PHImageRequestOptions()
+        options.isNetworkAccessAllowed = false
+        options.isSynchronous = false
+        options.version = .original
+        let data: Data? = await withCheckedContinuation { (cont: CheckedContinuation<Data?, Never>) in
+            PHImageManager.default().requestImageDataAndOrientation(for: asset, options: options) { data, _, _, _ in
+                cont.resume(returning: data)
+            }
+        }
+        guard let data, let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let props = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any] else { return true }
+        if let tiff = props[kCGImagePropertyTIFFDictionary] as? [CFString: Any], tiff[kCGImagePropertyTIFFMake] != nil { return true }
+        if let exif = props[kCGImagePropertyExifDictionary] as? [CFString: Any], exif[kCGImagePropertyExifLensModel] != nil { return true }
+        return false
     }
 
     /// AI に送る JPEG（長い辺 1024 px まで）
@@ -76,6 +115,30 @@ enum PhotoVision {
         return Look(food: food, label: label)
     }
 
+    /// 人の顔を塗りつぶす（便72。AI に送る前に）
+    static func hidingFaces(_ image: UIImage) -> UIImage {
+        guard let cg = image.cgImage else { return image }
+        let request = VNDetectFaceRectanglesRequest()
+        let handler = VNImageRequestHandler(cgImage: cg, orientation: orientation(image), options: [:])
+        do { try handler.perform([request]) } catch { return image }
+        let faces = request.results ?? []
+        guard !faces.isEmpty else { return image }
+        let size = image.size
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = image.scale
+        return UIGraphicsImageRenderer(size: size, format: format).image { context in
+            image.draw(in: CGRect(origin: .zero, size: size))
+            UIColor(hex: 0x9AA3B8).setFill()
+            for face in faces {
+                let b = face.boundingBox
+                let rect = CGRect(x: b.minX * size.width, y: (1 - b.maxY) * size.height,
+                                  width: b.width * size.width, height: b.height * size.height)
+                    .insetBy(dx: -b.width * size.width * 0.2, dy: -b.height * size.height * 0.3)
+                context.cgContext.fillEllipse(in: rect)
+            }
+        }
+    }
+
     /// 写真の中の文字（日本語と英語）
     static func text(_ image: UIImage) -> [String] {
         guard let cg = image.cgImage else { return [] }
@@ -89,7 +152,7 @@ enum PhotoVision {
         return lines.filter { Matcher.normalize($0).count >= 2 }
     }
 
-    private static func orientation(_ image: UIImage) -> CGImagePropertyOrientation {
+    static func orientation(_ image: UIImage) -> CGImagePropertyOrientation {
         switch image.imageOrientation {
         case .up: return .up
         case .down: return .down
