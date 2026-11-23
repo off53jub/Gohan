@@ -427,7 +427,8 @@ struct KeyGiveView: View {
         let payload = KeyHandoff.Payload(key: ClaudeLink.usesRelay ? nil : KeyStore.claudeKey,
                                          relayURL: ClaudeLink.usesRelay ? AISettings.relayURL : nil,
                                          relayToken: ClaudeLink.usesRelay ? KeyStore.relayToken : nil,
-                                         cap: cap, showCost: showCost)
+                                         cap: cap, showCost: showCost,
+                                         hotpepperKey: KeyStore.hotpepperKey, googleKey: KeyStore.googleKey)
         return KeyHandoff.seal(payload, code: code)
     }
 }

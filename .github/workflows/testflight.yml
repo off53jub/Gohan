@@ -105,6 +105,9 @@ jobs:
       - name: アーカイブ
         env:
           TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # お店の候補の取り元の鍵（あれば。アプリに入れて、端末で入れなくて済むようにする。2026-11-24）
+          HOTPEPPER_KEY: ${{ secrets.HOTPEPPER_KEY }}
+          GOOGLE_PLACES_KEY: ${{ secrets.GOOGLE_PLACES_KEY }}
         run: |
           set +e
           archive() {
@@ -115,6 +118,7 @@ jobs:
               -archivePath "$RUNNER_TEMP/Gohan.xcarchive" \
               DEVELOPMENT_TEAM="$TEAM_ID" \
               CURRENT_PROJECT_VERSION="${{ github.run_number }}" \
+              HOTPEPPER_KEY="$HOTPEPPER_KEY" GOOGLE_PLACES_KEY="$GOOGLE_PLACES_KEY" \
               "$@" 2>&1 | tee -a "$RUNNER_TEMP/build.log"
             return ${PIPESTATUS[0]}
           }

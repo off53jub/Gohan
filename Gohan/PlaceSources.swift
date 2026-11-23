@@ -5,16 +5,23 @@ import SwiftUI
 // どちらも本人が取った鍵を、この iPhone のキーチェーンにだけ置く。鍵が無ければ何もしない。
 
 extension KeyStore {
-    /// Google Maps Platform（Places API）の鍵
+    /// Google Maps Platform（Places API）の鍵（端末で入れたもの → 無ければ組み立てのときに入れたもの）
     static var googleKey: String? {
-        get { readValue("com.off53jub.gohan.google") }
+        get { readValue("com.off53jub.gohan.google") ?? builtIn("GooglePlacesKey") }
         set { writeValue("com.off53jub.gohan.google", newValue) }
     }
 
-    /// リクルート WEBサービス（ホットペッパーグルメ）の鍵
+    /// リクルート WEBサービス（ホットペッパーグルメ）の鍵（端末で入れたもの → 無ければ組み立てのときに入れたもの）
     static var hotpepperKey: String? {
-        get { readValue("com.off53jub.gohan.hotpepper") }
+        get { readValue("com.off53jub.gohan.hotpepper") ?? builtIn("HotPepperKey") }
         set { writeValue("com.off53jub.gohan.hotpepper", newValue) }
+    }
+
+    /// 組み立てのときに CI が入れた鍵（Info.plist。入っていなければ nil）
+    static func builtIn(_ name: String) -> String? {
+        guard let value = Bundle.main.object(forInfoDictionaryKey: name) as? String else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty || trimmed.hasPrefix("$(") ? nil : trimmed
     }
 }
 
