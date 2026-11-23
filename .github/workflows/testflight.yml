@@ -8,6 +8,9 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  # TestFlight の版は 90 日で切れるので、毎月 2 日の朝 3 時（日本）に作り直して送る（便9）
+  schedule:
+    - cron: "0 18 1 * *"
 
 jobs:
   # 決め方（食事のまとめ方・お店の点数・Claude の答えの読み方）をシミュレーターで確かめる
@@ -159,7 +162,7 @@ jobs:
           retention-days: 30
 
       - name: リリースに残す
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: (github.event_name == 'push' || github.event_name == 'schedule') && github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

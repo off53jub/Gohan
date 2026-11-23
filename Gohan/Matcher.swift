@@ -13,6 +13,39 @@ struct SeenPhoto: Codable, Equatable {
     var label: String
     /// もう食事にまとめたか
     var used: Bool = false
+    /// 動画から拾った1コマか（便21）
+    var isVideo: Bool = false
+    /// カメラで撮った写真ではない（SNS から保存した画像など。便22）
+    var noCamera: Bool = false
+
+    init(id: String, date: Date, latitude: Double?, longitude: Double?, accuracy: Double?, food: Double, label: String,
+         used: Bool = false, isVideo: Bool = false, noCamera: Bool = false) {
+        self.id = id
+        self.date = date
+        self.latitude = latitude
+        self.longitude = longitude
+        self.accuracy = accuracy
+        self.food = food
+        self.label = label
+        self.used = used
+        self.isVideo = isVideo
+        self.noCamera = noCamera
+    }
+
+    // 前の版で覚えた写真（isVideo・noCamera が無い）も読めるように
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        date = try c.decode(Date.self, forKey: .date)
+        latitude = try c.decodeIfPresent(Double.self, forKey: .latitude)
+        longitude = try c.decodeIfPresent(Double.self, forKey: .longitude)
+        accuracy = try c.decodeIfPresent(Double.self, forKey: .accuracy)
+        food = try c.decodeIfPresent(Double.self, forKey: .food) ?? 0
+        label = try c.decodeIfPresent(String.self, forKey: .label) ?? ""
+        used = try c.decodeIfPresent(Bool.self, forKey: .used) ?? false
+        isVideo = try c.decodeIfPresent(Bool.self, forKey: .isVideo) ?? false
+        noCamera = try c.decodeIfPresent(Bool.self, forKey: .noCamera) ?? false
+    }
 }
 
 /// 通信も画面も使わない決め方（テストできるように、ここにまとめる）
@@ -35,7 +68,8 @@ enum Matcher {
         for photo in sorted {
             if var last = groups.last, let tail = last.last,
                photo.date.timeIntervalSince(tail.date) <= mealGap,
-               closeEnough(photo, last) {
+               closeEnough(photo, last),
+               !courseChanged(from: tail, to: photo) {
                 last.append(photo)
                 groups[groups.count - 1] = last
             } else {
@@ -43,6 +77,36 @@ enum Matcher {
             }
         }
         return groups
+    }
+
+    /// カフェ → ごはん のように、甘いもの・飲み物と食事が 20 分以上あけて入れかわったら別の食事にする（便19）
+    static func courseChanged(from a: SeenPhoto, to b: SeenPhoto) -> Bool {
+        guard b.date.timeIntervalSince(a.date) >= 20 * 60, !a.label.isEmpty, !b.label.isEmpty else { return false }
+        return isLight(a.label) != isLight(b.label)
+    }
+
+    static let lightLabels: Set<String> = [
+        "dessert", "cake", "coffee", "tea", "pastry", "ice_cream", "cookie", "donut", "cupcake", "candy", "chocolate",
+        "macaron", "parfait", "crepe", "juice", "smoothie", "drink", "beverage", "beer", "wine", "cocktail",
+    ]
+
+    static func isLight(_ label: String) -> Bool { lightLabels.contains(label) }
+
+    /// 位置の無い写真に、前後 30 分以内に撮った写真の位置を借りる（便16）
+    static func fillLocations(_ photos: [SeenPhoto], among all: [SeenPhoto]) -> [SeenPhoto] {
+        let located = all.filter { $0.latitude != nil && $0.longitude != nil }
+        return photos.map { photo in
+            guard photo.latitude == nil else { return photo }
+            let near = located.filter { abs($0.date.timeIntervalSince(photo.date)) <= 30 * 60 }
+            guard let best = near.min(by: { abs($0.date.timeIntervalSince(photo.date)) < abs($1.date.timeIntervalSince(photo.date)) }) else {
+                return photo
+            }
+            var p = photo
+            p.latitude = best.latitude
+            p.longitude = best.longitude
+            p.accuracy = max(best.accuracy ?? 50, 100)
+            return p
+        }
     }
 
     private static func closeEnough(_ photo: SeenPhoto, _ group: [SeenPhoto]) -> Bool {
@@ -136,6 +200,28 @@ enum Matcher {
         return parts.joined(separator: " ")
     }
 
+    /// レシート・領収書らしい文字か（便18）
+    static func looksLikeReceipt(_ lines: [String]) -> Bool {
+        let joined = lines.joined(separator: " ")
+        let hints = ["領収", "レシート", "合計", "小計", "お預り", "お釣", "TEL", "Tel", "電話", "登録番号"]
+        return hints.filter { joined.contains($0) }.count >= 2
+    }
+
+    /// レシートの上のほうに書いてある店名らしい行（レシートでなければ空）
+    static func receiptNames(_ lines: [String]) -> [String] {
+        guard looksLikeReceipt(lines) else { return [] }
+        let skip = ["領収", "レシート", "合計", "小計", "様", "円", "¥", "TEL", "Tel", "電話", "登録番号", "No", "税"]
+        var out: [String] = []
+        for line in lines.prefix(8) {
+            let n = normalize(line)
+            guard n.count >= 2, n.count <= 20, !skip.contains(where: { line.contains($0) }) else { continue }
+            if Double(n.filter(\.isNumber).count) / Double(n.count) > 0.3 { continue }
+            out.append(line)
+            if out.count >= 2 { break }
+        }
+        return out
+    }
+
     /// 地図で探すのに使えそうな文字（店名らしい行）。値段・日付・短すぎる・長すぎるものは外す
     static func searchableLines(_ lines: [String], limit: Int = 3) -> [String] {
         var out: [String] = []
@@ -162,6 +248,7 @@ enum Matcher {
             let near = exp(-max(0, c.distance) / 90)
             let text = textMatch(name: c.name, lines: lines)
             let kind = categoryFit(category: c.category, label: dishLabel)
+            c.textHit = text
             c.score = min(1, 0.45 * near + 0.35 * text + 0.12 * (c.visited ? 1 : 0) + 0.08 * kind)
             return c
         }

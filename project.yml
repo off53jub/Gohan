@@ -1,6 +1,7 @@
 name: Gohan
 options:
   bundleIdPrefix: com.off53jub
+  developmentLanguage: ja
   deploymentTarget:
     iOS: "17.0"
 settings:
@@ -26,15 +27,34 @@ targets:
       path: Gohan/Info.plist
       properties:
         CFBundleDisplayName: ごはん帖
+        CFBundleDevelopmentRegion: ja
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         UILaunchScreen: {}
         ITSAppUsesNonExemptEncryption: false
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
         NSPhotoLibraryUsageDescription: ごはんの写真を見つけて、撮った場所と時刻から、どのお店で何を食べたかを記録します。
+        NSCameraUsageDescription: AI の鍵を受け取るときに、QR コードを読みます。
+        NSLocationWhenInUseUsageDescription: いまいる所から近い「また行きたいお店」を選んだり、おうち・職場の場所を覚えたりします。
+        NSLocationAlwaysAndWhenInUseUsageDescription: また行きたいお店の近くに来たときに、お知らせします（設定でオンにしたときだけ）。
+        NSCalendarsFullAccessUsageDescription: 予定の名前と場所を、お店を当てる手がかりにします（設定でオンにしたときだけ）。
+        NSFaceIDUsageDescription: ごはん帖を Face ID で開きます（設定でオンにしたときだけ）。
         # 夜などに、アプリを開いていなくても新しい写真を読む（いつ動くかは iOS が決める）
         UIBackgroundModes: [fetch, processing]
-        BGTaskSchedulerPermittedIdentifiers: [com.off53jub.gohan.scan]
+        BGTaskSchedulerPermittedIdentifiers: [com.off53jub.gohan.scan, com.off53jub.gohan.refresh, com.off53jub.gohan.backfill]
+        # 「ファイル」アプリにバックアップを置く・.gohan（ふたり帖）や バックアップを開く
+        UIFileSharingEnabled: true
+        LSSupportsOpeningDocumentsInPlace: true
+        CFBundleDocumentTypes:
+          - CFBundleTypeName: ふたり帖
+            LSHandlerRank: Owner
+            LSItemContentTypes: [com.off53jub.gohan.book]
+        UTExportedTypeDeclarations:
+          - UTTypeIdentifier: com.off53jub.gohan.book
+            UTTypeDescription: ふたり帖
+            UTTypeConformsTo: [public.data, public.content]
+            UTTypeTagSpecification:
+              public.filename-extension: [gohan]
   GohanTests:
     type: bundle.unit-test
     platform: iOS

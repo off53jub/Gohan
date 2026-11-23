@@ -1,3 +1,4 @@
+import CoreSpotlight
 import SwiftData
 import SwiftUI
 
@@ -17,11 +18,17 @@ struct GohanApp: App {
         }
         Scanner.shared.container = container
         Scanner.registerBackground()
+        Net.shared.start()
+        Brush.shared.load()
+        LocationWatch.shared.start()
+        NotificationRouter.shared.start()
+        PartnerStore.shared.load()
     }
 
     var body: some Scene {
         WindowGroup {
             RootView()
+                .tint(Ink.ai)
         }
         .modelContainer(container)
     }
@@ -29,21 +36,27 @@ struct GohanApp: App {
 
 struct RootView: View {
     @Environment(\.scenePhase) private var phase
+    @Environment(\.modelContext) private var context
     @State private var onboarded = ScanSettings.onboarded
     @State private var scanner = Scanner.shared
+    @State private var router = Router.shared
+    @State private var undo = UndoCenter.shared
+    @State private var locked = FaceLock.enabled
+    @State private var importMessage: String?
 
     var body: some View {
         Group {
             if onboarded {
-                TabView {
+                TabView(selection: $router.tab) {
                     TimelineView()
-                        .tabItem { Label("記録", systemImage: "fork.knife") }
+                        .tabItem { Label("きろく", systemImage: "book.closed") }
+                        .tag(Router.Tab.log)
+                    WantView()
+                        .tabItem { Label("また行きたい", systemImage: "heart") }
+                        .tag(Router.Tab.want)
                     PlacesMapView()
                         .tabItem { Label("地図", systemImage: "map") }
-                    PlacesView()
-                        .tabItem { Label("お店", systemImage: "heart.text.square") }
-                    SettingsView()
-                        .tabItem { Label("設定", systemImage: "gearshape") }
+                        .tag(Router.Tab.map)
                 }
             } else {
                 OnboardingView {
@@ -52,11 +65,100 @@ struct RootView: View {
                 }
             }
         }
-        .onChange(of: phase) { _, new in
-            if new == .active, onboarded, ScanSettings.auto {
-                Task { await scanner.scan() }
+        .overlay(alignment: .bottom) {
+            if let message = undo.message {
+                UndoToast(message: message)
+                    .padding(.bottom, 96)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
             }
-            if new == .background { Scanner.scheduleBackground() }
         }
+        .animation(.spring(duration: 0.3), value: undo.message)
+        .overlay {
+            if locked { LockView { locked = false } }
+        }
+        .onChange(of: phase) { _, new in
+            if new == .active {
+                PhotoWatch.shared.start()
+                if onboarded, ScanSettings.auto { Task { await scanner.scan() } }
+                _ = Backup.remapMissing(context: context)
+            }
+            if new == .background {
+                Scanner.scheduleBackground()
+                if FaceLock.enabled { locked = true }
+            }
+        }
+        .onOpenURL { url in open(url) }
+        .onContinueUserActivity(CSSearchableItemActionType) { activity in
+            if let id = activity.userInfo?[CSSearchableItemActivityIdentifier] as? String, let uuid = UUID(uuidString: id) {
+                router.tab = .log
+                router.openMeal = uuid
+            }
+        }
+        .alert("ふたり帖", isPresented: Binding(get: { importMessage != nil }, set: { if !$0 { importMessage = nil } })) {
+            Button("OK") { importMessage = nil }
+        } message: {
+            Text(importMessage ?? "")
+        }
+    }
+
+    /// .gohan（ふたり帖）や バックアップのファイルを開いたとき
+    private func open(_ url: URL) {
+        if url.pathExtension == "gohan" {
+            do {
+                let count = try PartnerStore.shared.receive(url, context: context)
+                importMessage = "\(count) 食を受け取りました。きろくの右上「…」→「ふたり」で見られます。"
+            } catch {
+                importMessage = "読めませんでした: \(error.localizedDescription)"
+            }
+        } else if url.pathExtension == "json" {
+            do {
+                let added = try Backup.restore(from: url, context: context)
+                importMessage = "バックアップから \(added) 食を戻しました。"
+            } catch {
+                importMessage = "バックアップを読めませんでした: \(error.localizedDescription)"
+            }
+        }
+    }
+}
+
+/// 「元に戻す」の帯
+struct UndoToast: View {
+    let message: String
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Text(message).font(.subheadline).foregroundStyle(Ink.onAi).lineLimit(2)
+            Spacer(minLength: 8)
+            Button("元に戻す") { UndoCenter.shared.undo() }
+                .font(.subheadline.bold())
+                .foregroundStyle(Ink.onAi)
+                .frame(minHeight: 44)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 6)
+        .background(Ink.ai, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .padding(.horizontal, 16)
+    }
+}
+
+/// Face ID で開く（便74）
+struct LockView: View {
+    let unlocked: () -> Void
+
+    var body: some View {
+        ZStack {
+            Ink.ground.ignoresSafeArea()
+            VStack(spacing: 20) {
+                Text("ごはん帖").font(.brush(34, relativeTo: .largeTitle)).foregroundStyle(Ink.ai)
+                Button("ひらく") { Task { await tryUnlock() } }
+                    .buttonStyle(InkButtonStyle())
+                    .frame(width: 200)
+            }
+        }
+        .task { await tryUnlock() }
+    }
+
+    private func tryUnlock() async {
+        if await FaceLock.unlock() { unlocked() }
     }
 }
