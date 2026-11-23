@@ -549,6 +549,9 @@ struct CandidatePicker: View {
                     }
                     Button("お店ではない（家・持ち帰りなど）") { notShop() }
                         .buttonStyle(InkButtonStyle(filled: false))
+                    if (meal.candidates + results).contains(where: { $0.category.hasPrefix("genre:") }) {
+                        HotPepperCredit()
+                    }
                 }
                 .padding(20)
             }

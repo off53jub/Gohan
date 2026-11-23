@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 
 // お店の候補の取り元を増やす（4。2026-11-24）。Apple のマップに加えて、鍵があれば Google・ホットペッパーも見る。
 // どちらも本人が取った鍵を、この iPhone のキーチェーンにだけ置く。鍵が無ければ何もしない。
@@ -209,5 +210,17 @@ enum WebCheck {
               let name = obj["name"] as? String, !name.isEmpty else { return (nil, usd) }
         let confidence = (obj["confidence"] as? NSNumber)?.doubleValue ?? 0
         return (Answer(name: name, confidence: confidence), usd)
+    }
+}
+
+/// ホットペッパーの情報を使うときの表示（ご利用案内のテキスト形式。2026-11-24 に確認）
+struct HotPepperCredit: View {
+    var body: some View {
+        HStack(spacing: 4) {
+            Text("Powered by")
+            Link("ホットペッパーグルメ Webサービス", destination: URL(string: "https://webservice.recruit.co.jp/")!)
+        }
+        .font(.caption)
+        .foregroundStyle(Ink.hai)
     }
 }

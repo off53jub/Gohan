@@ -323,6 +323,7 @@ struct AdvancedSettingsView: View {
                 }
                 if hasHotpepper {
                     LabeledContent("ホットペッパー", value: "使っています")
+                    HotPepperCredit()
                     Button("ホットペッパーの鍵を外す", role: .destructive) { KeyStore.hotpepperKey = nil; hasHotpepper = false }
                 } else {
                     SecureField("ホットペッパーグルメの鍵", text: $hotpepperKey).textInputAutocapitalization(.never).autocorrectionDisabled()
