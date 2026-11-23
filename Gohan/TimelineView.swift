@@ -267,15 +267,16 @@ struct StatusLine: View {
                         .font(.footnote).foregroundStyle(Ink.hai)
                 }
             }
-            if let error = scanner.lastError {
+            // エラーと AI の状態は、作る人のメニューを出しているときだけ
+            if MakerMode.on, let error = scanner.lastError {
                 Text(error).font(.footnote).foregroundStyle(Ink.hai)
             }
-            if !ClaudeLink.isReady || !Spend.canSpend {
+            if MakerMode.on, !ClaudeLink.isReady || !Spend.canSpend {
                 Text(AISettings.deviceOnly ? "端末だけで判定しています（写真は送りません）"
                      : Spend.canSpend ? "いまは端末だけで判定しています" : "今月の AI はお休み中です。端末だけで判定しています")
                     .font(.footnote).foregroundStyle(Ink.hai)
             }
-            if scanner.deferredOld > 0 {
+            if MakerMode.on, scanner.deferredOld > 0 {
                 Text("古い写真 \(scanner.deferredOld) 枚は、充電中に Wi-Fi で読みます")
                     .font(.footnote).foregroundStyle(Ink.hai)
             }

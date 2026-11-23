@@ -26,20 +26,25 @@ extension KeyStore {
 }
 
 extension PlaceFinder {
-    /// 近くのお店（Apple のマップ＋鍵があれば Google・ホットペッパー）
+    /// 近くのお店（Apple のマップ＋ホットペッパー）。Google は、ここで見つからないときだけ別に呼ぶ（本人の希望。2026-11-24）
     static func nearbyAll(latitude: Double, longitude: Double, radius: Double) async -> [PlaceCandidate] {
         async let apple = nearby(latitude: latitude, longitude: longitude, radius: radius)
-        async let google = GooglePlaces.nearby(latitude: latitude, longitude: longitude, radius: radius)
         async let pepper = HotPepper.search(keyword: nil, latitude: latitude, longitude: longitude, radius: radius)
-        return merge([await apple, await google, await pepper])
+        return merge([await apple, await pepper])
     }
 
-    /// 名前で探す（Apple のマップ＋鍵があれば Google・ホットペッパー）
+    /// 名前で探す（Apple のマップ＋ホットペッパー）
     static func searchAll(_ query: String, latitude: Double, longitude: Double, radius: Double) async -> [PlaceCandidate] {
         async let apple = search(query, latitude: latitude, longitude: longitude, radius: radius)
-        async let google = GooglePlaces.text(query, latitude: latitude, longitude: longitude, radius: radius)
         async let pepper = HotPepper.search(keyword: query, latitude: latitude, longitude: longitude, radius: radius)
-        return merge([await apple, await google, await pepper])
+        return merge([await apple, await pepper])
+    }
+
+    /// 名前で探す。Apple・ホットペッパーで見つからなければ Google でも探す
+    static func searchWithFallback(_ query: String, latitude: Double, longitude: Double, radius: Double) async -> [PlaceCandidate] {
+        let first = await searchAll(query, latitude: latitude, longitude: longitude, radius: radius)
+        if !first.isEmpty { return first }
+        return await GooglePlaces.text(query, latitude: latitude, longitude: longitude, radius: radius)
     }
 }
 
@@ -78,6 +83,8 @@ enum GooglePlaces {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue(key, forHTTPHeaderField: "X-Goog-Api-Key")
         request.setValue(fields, forHTTPHeaderField: "X-Goog-FieldMask")
+        // 鍵を「iOS アプリ」で制限したときに要る印
+        request.setValue(Bundle.main.bundleIdentifier ?? "com.off53jub.gohan", forHTTPHeaderField: "X-Ios-Bundle-Identifier")
         request.httpBody = data
         guard let result = try? await URLSession.shared.data(for: request),
               (result.1 as? HTTPURLResponse)?.statusCode == 200 else { return [] }
