@@ -27,6 +27,8 @@ struct SettingsView: View {
     @State private var restoreMessage: String?
     @State private var limited = PHPhotoLibrary.authorizationStatus(for: .readWrite) == .limited
     @State private var locationRatio: Double?
+    @State private var maker = MakerMode.on
+    @State private var versionTaps = 0
 
     var body: some View {
         NavigationStack {
@@ -63,9 +65,24 @@ struct SettingsView: View {
                 backupSection
                 hiddenSection
                 Section {
-                    NavigationLink("くわしい設定") { AdvancedSettingsView() }
+                    if maker {
+                        NavigationLink("くわしい設定（作る人のメニュー）") { AdvancedSettingsView() }
+                        Button("作る人のメニューを隠す") {
+                            MakerMode.on = false
+                            maker = false
+                        }
+                    }
                 } footer: {
+                    // 「版」を 5 回たたくと、作る人のメニューが出る
                     Text("版 \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "")（\(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "")）")
+                        .onTapGesture {
+                            versionTaps += 1
+                            if versionTaps >= 5 {
+                                MakerMode.on = true
+                                maker = true
+                                versionTaps = 0
+                            }
+                        }
                 }
             }
             .navigationTitle("設定")
@@ -86,11 +103,19 @@ struct SettingsView: View {
         }
     }
 
+    @ViewBuilder
     private var aiSection: some View {
+        // 鍵がもう入っていれば、ふだんは出さない（作る人のメニューでは出す）
+        if maker || !ClaudeLink.isReady {
+            aiSectionBody
+        }
+    }
+
+    private var aiSectionBody: some View {
         Section {
             LabeledContent("AI", value: aiState)
             Button("AI の鍵を受け取る（QR）") { receiving = true }
-            if AISettings.showCost {
+            if maker, AISettings.showCost {
                 LabeledContent("今月使った額", value: String(format: "$%.2f / $%.0f", Spend.thisMonth, Spend.cap))
             }
         } header: {

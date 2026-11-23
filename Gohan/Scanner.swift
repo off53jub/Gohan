@@ -336,6 +336,44 @@ final class Scanner {
                 setPlace(found, on: meal, confidence: 0.75, reason: "写真の店名「\(seen)」で探し直しました", context: context)
                 meal.source += "+name"
             }
+            // Apple・ホットペッパーで見つからない（お店が決まらない・自信が低い）ときだけ、Google でも探す（本人の希望。2026-11-24）
+            if meal.place == nil || meal.confidence < 0.6, KeyStore.googleKey != nil, !meal.aiPending {
+                status = "Google でも探しています"
+                var extra: [PlaceCandidate] = []
+                if let seen = verdict?.name_seen, !seen.isEmpty {
+                    extra += await GooglePlaces.text(seen, latitude: spot.latitude, longitude: spot.longitude, radius: 1000)
+                }
+                extra += await GooglePlaces.nearby(latitude: spot.latitude, longitude: spot.longitude, radius: indoor ? 450 : 250)
+                let already = Set(ranked.map { Matcher.normalize($0.name) })
+                let fresh = PlaceFinder.merge([extra]).filter { !already.contains(Matcher.normalize($0.name)) }
+                if !fresh.isEmpty {
+                    var merged = Matcher.rank(PlaceFinder.merge([ranked, fresh]), lines: lines + receipt, dishLabel: label)
+                    merged = Array(Matcher.applyGenre(merged, photoGenre: photoGuess?.genre).prefix(indoor ? 20 : 12))
+                    let learned = Corrections.lookup(latitude: spot.latitude, longitude: spot.longitude)
+                    merged = Matcher.applyCorrections(merged, right: learned.right, wrong: learned.wrong)
+                    meal.candidates = merged
+                    let core = Matcher.coreName(verdict?.name_seen ?? "")
+                    if !core.isEmpty, let named = fresh.first(where: { Matcher.similarity(Matcher.coreName($0.name), core) >= 0.6 }) {
+                        setPlace(named, on: meal, confidence: 0.8, reason: "写真の店名「\(core)」を Google で見つけました", context: context)
+                    } else if ClaudeLink.isReady, Spend.canSpend, !foodJPEGs.isEmpty {
+                        // 増えた候補で、AI にもう一度選んでもらう
+                        let again = ClaudeVision.prompt(date: first.date, area: meal.area, candidates: merged, lines: lines,
+                                                        foodCount: foodJPEGs.count, clueCount: clueJPEGs.count, event: event,
+                                                        receipt: receipt, indoor: indoor)
+                        if let second = try? await ClaudeVision.judge(food: foodJPEGs, clues: Array(clueJPEGs), prompt: again),
+                           second.place_index >= 0, second.place_index < merged.count, second.place_confidence > meal.confidence {
+                            setPlace(merged[second.place_index], on: meal, confidence: second.place_confidence,
+                                     reason: second.reason.isEmpty ? "Google のお店も入れて選び直しました" : second.reason, context: context)
+                        }
+                    } else {
+                        let (pick, confidence) = Matcher.decideOnDevice(merged)
+                        if let pick, pick.score >= 0.25, confidence > meal.confidence {
+                            setPlace(pick, on: meal, confidence: confidence, reason: Matcher.reason(for: pick, source: "device", receipt: false), context: context)
+                        }
+                    }
+                    meal.source += "+google"
+                }
+            }
             // 3. まだ迷っていれば、AI にネットで確かめてもらう（新しい写真だけ・設定でオフにできる）
             if meal.confidence < 0.6, !old, AISettings.webCheck, ClaudeLink.isReady, Spend.canSpend {
                 status = "ネットで確かめています"
@@ -343,7 +381,7 @@ final class Scanner {
                                          nameSeen: verdict?.name_seen ?? "", genre: meal.genre, dishes: meal.dishes,
                                          candidates: ranked.prefix(5).map(\.name), lines: Array((receipt + lines).prefix(15)))
                 if let answer = try? await WebCheck.ask(hint), answer.confidence >= 0.5,
-                   let found = await research(name: answer.name, current: meal.place, latitude: spot.latitude, longitude: spot.longitude, radius: 1500) {
+                   let found = await research(name: answer.name, current: meal.place, latitude: spot.latitude, longitude: spot.longitude, radius: 1500, google: true) {
                     setPlace(found, on: meal, confidence: min(0.85, answer.confidence), reason: "ネットで確かめました（\(answer.name)）", context: context)
                     meal.source += "+web"
                 }
@@ -354,10 +392,16 @@ final class Scanner {
     }
 
     /// 名前で探し直す。いまのお店と名前がもう合っていれば nil
-    private func research(name: String, current: Place?, latitude: Double, longitude: Double, radius: Double = 1000) async -> PlaceCandidate? {
+    private func research(name: String, current: Place?, latitude: Double, longitude: Double, radius: Double = 1000,
+                          google: Bool = false) async -> PlaceCandidate? {
         let core = Matcher.coreName(name)
         if let current, Matcher.similarity(Matcher.coreName(current.name), core) >= 0.6 { return nil }
-        let results = await PlaceFinder.searchAll(name, latitude: latitude, longitude: longitude, radius: radius)
+        let results: [PlaceCandidate]
+        if google {
+            results = await PlaceFinder.searchWithFallback(name, latitude: latitude, longitude: longitude, radius: radius)
+        } else {
+            results = await PlaceFinder.searchAll(name, latitude: latitude, longitude: longitude, radius: radius)
+        }
         guard let best = results.max(by: { Matcher.similarity(Matcher.coreName($0.name), core) < Matcher.similarity(Matcher.coreName($1.name), core) }) else {
             return nil
         }

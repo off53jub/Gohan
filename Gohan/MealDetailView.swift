@@ -200,7 +200,9 @@ struct MealDetailView: View {
             // 写真アプリの特定の写真は開けないので、写真アプリを開く（日時で探せる。便39）
             linkButton("写真アプリを開く") { if let url = URL(string: "photos-redirect://") { openURL(url) } }
             linkButton("これは食事じゃない", role: .destructive) { confirmHide = true }
-            Text("決め方: \(sourceText)").font(.caption).foregroundStyle(Ink.hai).padding(.top, 6)
+            if MakerMode.on {
+                Text("決め方: \(sourceText)").font(.caption).foregroundStyle(Ink.hai).padding(.top, 6)
+            }
         }
     }
 
@@ -701,6 +703,6 @@ struct CandidatePicker: View {
         // 写真の位置が無ければ、東京の真ん中から広く探す
         let lat = meal.latitude ?? 35.681, lon = meal.longitude ?? 139.767
         let radius = meal.latitude == nil ? 50_000.0 : 3_000.0
-        results = await PlaceFinder.search(text, latitude: lat, longitude: lon, radius: radius)
+        results = await PlaceFinder.searchWithFallback(text, latitude: lat, longitude: lon, radius: radius)
     }
 }

@@ -172,6 +172,15 @@ enum Backfill {
     }
 }
 
+/// 作る人のメニュー（設定の「版」を 5 回たたくと出る）。ふだんは、費用・AI の状態・エラー・決め方・くわしい設定を隠す
+/// （本人「アプリ内で彼女に見えなくて良いものは非表示で」2026-11-24）
+enum MakerMode {
+    static var on: Bool {
+        get { UserDefaults.standard.bool(forKey: "maker.mode") }
+        set { UserDefaults.standard.set(newValue, forKey: "maker.mode") }
+    }
+}
+
 /// 作る側の物差し（直された回数など。便58）
 enum Metrics {
     private static let d = UserDefaults.standard
