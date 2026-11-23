@@ -259,6 +259,9 @@ enum KeyHandoff {
         var cap: Double
         /// 受け取った端末で費用を見せるか（便76）
         var showCost: Bool
+        /// お店の候補の取り元の鍵（2026-11-24）
+        var hotpepperKey: String? = nil
+        var googleKey: String? = nil
     }
 
     static let prefix = "gohan-key:1:"
@@ -292,6 +295,8 @@ enum KeyHandoff {
         }
         Spend.cap = payload.cap
         AISettings.showCost = payload.showCost
+        if let k = payload.hotpepperKey, !k.isEmpty, KeyStore.builtIn("HotPepperKey") == nil { KeyStore.hotpepperKey = k }
+        if let k = payload.googleKey, !k.isEmpty, KeyStore.builtIn("GooglePlacesKey") == nil { KeyStore.googleKey = k }
         AISettings.deviceOnly = false
     }
 }

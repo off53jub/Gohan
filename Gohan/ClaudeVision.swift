@@ -4,17 +4,17 @@ import Security
 /// 鍵は端末のキーチェーンにだけ置く（コードにもリポジトリにも書かない）
 enum KeyStore {
     static var claudeKey: String? {
-        get { read("com.off53jub.gohan.claude") }
-        set { write("com.off53jub.gohan.claude", newValue) }
+        get { readValue("com.off53jub.gohan.claude") }
+        set { writeValue("com.off53jub.gohan.claude", newValue) }
     }
 
     /// 中継サーバーの合言葉（便2）
     static var relayToken: String? {
-        get { read("com.off53jub.gohan.relay") }
-        set { write("com.off53jub.gohan.relay", newValue) }
+        get { readValue("com.off53jub.gohan.relay") }
+        set { writeValue("com.off53jub.gohan.relay", newValue) }
     }
 
-    private static func read(_ service: String) -> String? {
+    static func readValue(_ service: String) -> String? {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -27,7 +27,7 @@ enum KeyStore {
         return value
     }
 
-    private static func write(_ service: String, _ value: String?) {
+    static func writeValue(_ service: String, _ value: String?) {
         let base: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service]
         SecItemDelete(base as CFDictionary)
         guard let value, !value.isEmpty, let data = value.data(using: .utf8) else { return }
@@ -87,9 +87,11 @@ struct MealVerdict: Codable, Equatable {
     var kind: String = "meal"
     /// お店に決めた理由（1行）
     var reason: String = ""
+    /// 写真（看板・のれん・メニュー・レシート・箸袋）から読めた店名（読めなければ空。2）
+    var name_seen: String = ""
 
     init(is_meal: Bool, eaten_out: Bool, place_index: Int, place_confidence: Double, genre: String, dishes: [String],
-         summary: String, kind: String = "meal", reason: String = "") {
+         summary: String, kind: String = "meal", reason: String = "", name_seen: String = "") {
         self.is_meal = is_meal
         self.eaten_out = eaten_out
         self.place_index = place_index
@@ -99,6 +101,7 @@ struct MealVerdict: Codable, Equatable {
         self.summary = summary
         self.kind = kind
         self.reason = reason
+        self.name_seen = name_seen
     }
 
     init(from decoder: Decoder) throws {
@@ -112,6 +115,7 @@ struct MealVerdict: Codable, Equatable {
         summary = try c.decode(String.self, forKey: .summary)
         kind = try c.decodeIfPresent(String.self, forKey: .kind) ?? "meal"
         reason = try c.decodeIfPresent(String.self, forKey: .reason) ?? ""
+        name_seen = try c.decodeIfPresent(String.self, forKey: .name_seen) ?? ""
     }
 }
 
@@ -233,6 +237,15 @@ enum ClaudeVision {
     5. genre は一覧から1つ。summary は「濃厚な豚骨ラーメンと餃子」のような20字くらいの一言。
     6. kind は、しっかりした食事なら meal、カフェでの軽いものなら cafe、おやつ・甘いものだけなら snack、飲み物だけなら drink。
     7. reason は、そのお店に決めた理由を30字くらいで（例: 看板の「こもれび」と場所が合った）。お店を選ばないときは空にする。
+    8. name_seen は、写真（看板・のれん・メニュー・レシート・箸袋・紙ナプキン・器の名入れ）から読める店名。候補の一覧に無くても書く。
+       手書きや筆文字でも、読めるならそのまま書く。読めなければ空にする（推測では書かない）。
+
+    料理の見分け方（日本の外食の写真）:
+    - どんぶりに麺と汁が入っていれば、まずラーメン・うどん・そばのどれかを考える。「スープ」「パスタ」にする前に、
+      ちぢれ麺・黄色い麺・チャーシュー・メンマ・海苔・ねぎ・なると・味玉・れんげ・中華風のどんぶり があればラーメン。
+      太く白い麺はうどん、灰色や茶色の細い麺はそば。つけ汁が別の器ならつけ麺（ジャンルも「つけ麺」）。
+    - パスタは皿に盛られた洋風の麺。汁の多い麺をパスタにしない。
+    - ジャンルは料理の見た目とお店の名前の両方で決め、くい違うときは見た目を信じる。
     """
 
     static var schema: [String: Any] {
@@ -248,21 +261,23 @@ enum ClaudeVision {
                 "summary": ["type": "string"],
                 "kind": ["type": "string", "enum": ["meal", "cafe", "snack", "drink"]],
                 "reason": ["type": "string"],
+                "name_seen": ["type": "string"],
             ],
-            "required": ["is_meal", "eaten_out", "place_index", "place_confidence", "genre", "dishes", "summary", "kind", "reason"],
+            "required": ["is_meal", "eaten_out", "place_index", "place_confidence", "genre", "dishes", "summary", "kind", "reason", "name_seen"],
             "additionalProperties": false,
         ]
     }
 
     /// 写真の説明と候補の一覧（AI に渡す文）
     static func prompt(date: Date, area: String, candidates: [PlaceCandidate], lines: [String], foodCount: Int, clueCount: Int,
-                       event: String? = nil, receipt: [String] = [], knownPlace: String? = nil) -> String {
+                       event: String? = nil, receipt: [String] = [], knownPlace: String? = nil, indoor: Bool = false) -> String {
         let f = DateFormatter()
         f.locale = Locale(identifier: "ja_JP")
         f.dateFormat = "yyyy年M月d日(E) H:mm"
         var text = "撮った日時: \(f.string(from: date))\n"
         if !area.isEmpty { text += "だいたいの場所: \(area)\n" }
         if let event, !event.isEmpty { text += "その時間の予定表: \(event)\n" }
+        if indoor { text += "写真の位置はずれているかもしれません（ビルの中・地下など）。距離より、料理の種類と写真の文字を重く見てください。\n" }
         text += "写真: はじめの \(foodCount) 枚は料理、そのあとの \(clueCount) 枚は前後に撮った看板・メニューなど（無いこともある）\n\n"
         if let knownPlace {
             text += "お店はもう分かっています（前にも来たお店）: 0. \(knownPlace)\nplace_index は 0 にして、料理を中心に見てください。\n"

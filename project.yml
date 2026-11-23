@@ -28,6 +28,9 @@ targets:
       properties:
         CFBundleDisplayName: ごはん帖
         CFBundleDevelopmentRegion: ja
+        # CI が Secrets から入れる（無ければ空。端末で入れた鍵があればそちらを使う）
+        HotPepperKey: $(HOTPEPPER_KEY)
+        GooglePlacesKey: $(GOOGLE_PLACES_KEY)
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         UILaunchScreen: {}
