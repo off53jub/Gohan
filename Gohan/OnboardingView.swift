@@ -27,7 +27,10 @@ struct OnboardingView: View {
     private var hello: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
-                Seigaiha().frame(height: 90)
+                Image(systemName: "fork.knife.circle.fill")
+                    .font(.system(size: 64))
+                    .foregroundStyle(Ink.ai)
+                    .accessibilityHidden(true)
                 Text("ごはん帖").font(.brush(40, relativeTo: .largeTitle)).foregroundStyle(Ink.ai)
                 Text("いつも通りカメラでごはんを撮るだけで、どのお店で・何を食べたかを、帖に書きとめます。メモは要りません。")
                     .foregroundStyle(Ink.sumi)

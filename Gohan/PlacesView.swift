@@ -311,7 +311,7 @@ struct PlaceDetailView: View {
                     VStack(alignment: .leading, spacing: 6) {
                         Text("つぎに食べたいもの").sectionLabel()
                         TextField("例: まぜそば", text: $place.nextWish)
-                            .font(.brush(17))
+                            .font(.body)
                             .padding(12)
                             .background(Ink.card, in: RoundedRectangle(cornerRadius: 12))
                             .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Ink.line))
@@ -356,7 +356,7 @@ struct PlaceDetailView: View {
                     ForEach(Array(visits.enumerated()), id: \.element.id) { i, meal in
                         NavigationLink(value: meal) {
                             Stamp(text: meal.date.formatted(.dateTime.month(.defaultDigits).day()), sub: "\(i + 1)回目", size: 64,
-                                  filled: i == visits.count - 1, tilt: i % 2 == 0 ? -6 : 5)
+                                  filled: i == visits.count - 1)
                         }
                         .buttonStyle(.plain)
                     }
@@ -595,7 +595,7 @@ enum WishReader {
     static func read(_ raw: String) async -> Guess {
         let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue)
-        let url = detector?.firstMatch(in: text, range: NSRange(text.startIndex..., in: text))?.url
+        let url = detector?.firstMatch(in: text, options: [], range: NSRange(text.startIndex..., in: text))?.url
         if let url, let host = url.host {
             if host.contains("tabelog") {
                 if let title = await pageTitle(url) {

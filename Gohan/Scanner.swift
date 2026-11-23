@@ -490,13 +490,13 @@ final class Scanner {
     /// iOS が別の糸から呼ぶので、画面の糸に縛らない
     nonisolated static func registerBackground() {
         BGTaskScheduler.shared.register(forTaskWithIdentifier: taskID, using: nil) { task in
-            run(task, mode: .normal)
+            Scanner.run(task, mode: .normal)
         }
         BGTaskScheduler.shared.register(forTaskWithIdentifier: refreshID, using: nil) { task in
-            run(task, mode: .quick)
+            Scanner.run(task, mode: .quick)
         }
         BGTaskScheduler.shared.register(forTaskWithIdentifier: backfillID, using: nil) { task in
-            run(task, mode: .backfill)
+            Scanner.run(task, mode: .backfill)
         }
     }
 

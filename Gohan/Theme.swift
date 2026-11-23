@@ -1,10 +1,9 @@
-import CoreText
 import Observation
 import SwiftUI
 import UIKit
 
-// デザイン「うつわ」（2026-11-23）: 白い器と、藍のインク。赤は「印」（また行きたい・◯回目）だけ。
-// 料理の写真は暖色が多いので、まわりは寒色に寄せて写真を引き立てる。docs/design-and-ideas-2026-11-23.md
+// デザイン（2026-11-23「うつわ」→ 2026-11-24 本人の希望で「明瞭」に寄せた）: 白い地・藍の字・赤は印（また行きたい・◯回目）だけ。
+// 料理の写真は暖色が多いので、まわりは寒色に寄せて写真を引き立てる。飾り（手書き風の字・傾いたはんこ・模様）は使わない。
 
 /// 色（暗い画面では明るさを入れ替える）
 enum Ink {
@@ -41,30 +40,14 @@ extension UIColor {
     }
 }
 
-/// 店名・月・ひとことの字（ペンで書いたような字）。
-/// クレー（Klee）は iOS が後から取りに行ける字（仮説: 一部の端末では取れない）。取れるまでは丸ゴシックで代える
+/// 店名・月の字。2026-11-24 本人「明瞭 UI がいいかも」で、手書き風（クレー）をやめて太い角ゴシックにした
 @MainActor
 @Observable
 final class Brush {
     static let shared = Brush()
-    private(set) var family = "HiraMaruProN-W4"
-    private static let klee = "Klee-Demibold"
+    private(set) var family = "HiraginoSans-W6"
 
-    func load() {
-        if UIFont(name: Self.klee, size: 12) != nil {
-            family = Self.klee
-            return
-        }
-        let descriptor = CTFontDescriptorCreateWithNameAndSize(Self.klee as CFString, 0)
-        _ = CTFontDescriptorMatchFontDescriptorsWithProgressHandler([descriptor] as CFArray, nil) { state, _ in
-            if state == .didFinish {
-                DispatchQueue.main.async {
-                    if UIFont(name: Brush.klee, size: 12) != nil { Brush.shared.family = Brush.klee }
-                }
-            }
-            return true
-        }
-    }
+    func load() {}
 
     /// 字の大きさの設定に合わせて大きくなる
     func font(_ size: CGFloat, relativeTo style: Font.TextStyle = .body) -> Font {
@@ -86,7 +69,7 @@ struct Stamp: View {
     var sub: String?
     var size: CGFloat = 54
     var filled = false
-    var tilt: Double = -8
+    var tilt: Double = 0
 
     var body: some View {
         VStack(spacing: 0) {
@@ -158,43 +141,10 @@ struct HeartButton: View {
     }
 }
 
-/// 細い縦線の帯（十草）。月の扉の下に引く
+/// 区切りの細い線（月の見出しの下に引く）
 struct Tokusa: View {
     var body: some View {
-        Canvas { context, size in
-            var x: CGFloat = 0
-            while x < size.width {
-                context.fill(Path(CGRect(x: x, y: 0, width: 1, height: size.height)), with: .color(Ink.ai.opacity(0.35)))
-                x += 6
-            }
-        }
-        .frame(height: 6)
-        .accessibilityHidden(true)
-    }
-}
-
-/// 青海波（何もないときの絵）
-struct Seigaiha: View {
-    var body: some View {
-        Canvas { context, size in
-            let r: CGFloat = 18
-            var row = 0
-            var y: CGFloat = size.height
-            while y > -r {
-                var x: CGFloat = row % 2 == 0 ? 0 : r
-                while x < size.width + r {
-                    for k in 0..<3 {
-                        let rr = r - CGFloat(k) * 6
-                        let rect = CGRect(x: x - rr, y: y - rr, width: rr * 2, height: rr * 2)
-                        context.stroke(Path(ellipseIn: rect), with: .color(Ink.ai.opacity(0.25)), lineWidth: 1)
-                    }
-                    x += r * 2
-                }
-                y -= r * 0.75
-                row += 1
-            }
-        }
-        .accessibilityHidden(true)
+        Rectangle().fill(Ink.line).frame(height: 1).accessibilityHidden(true)
     }
 }
 
@@ -235,17 +185,21 @@ struct InkButtonStyle: ButtonStyle {
     }
 }
 
-/// 何もないときの絵と文
+/// 何もないときのアイコンと文
 struct EmptyArt: View {
     let title: String
     let message: String
 
     var body: some View {
-        VStack(spacing: 14) {
-            Seigaiha().frame(height: 120).mask(LinearGradient(colors: [.clear, .black, .black, .clear], startPoint: .leading, endPoint: .trailing))
-            Text(title).font(.brush(20, relativeTo: .title3)).foregroundStyle(Ink.ai)
+        VStack(spacing: 12) {
+            Image(systemName: "fork.knife.circle")
+                .font(.system(size: 52, weight: .regular))
+                .foregroundStyle(Ink.ai)
+                .accessibilityHidden(true)
+            Text(title).font(.headline).foregroundStyle(Ink.sumi)
             Text(message).font(.callout).foregroundStyle(Ink.hai).multilineTextAlignment(.center)
         }
+        .frame(maxWidth: .infinity)
         .padding(24)
     }
 }

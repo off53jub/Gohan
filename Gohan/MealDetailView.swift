@@ -137,7 +137,7 @@ struct MealDetailView: View {
         VStack(alignment: .leading, spacing: 6) {
             Text("ひとこと").sectionLabel()
             TextField("書かなくても大丈夫です", text: $meal.note, axis: .vertical)
-                .font(.brush(17))
+                .font(.body)
                 .padding(12)
                 .background(Ink.card, in: RoundedRectangle(cornerRadius: 12))
                 .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Ink.line))
