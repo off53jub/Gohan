@@ -115,8 +115,13 @@ struct MealDetailView: View {
             Menu {
                 ForEach(Genre.all, id: \.self) { g in
                     Button(g) {
+                        let old = meal.genre
+                        guard old != g else { return }
                         meal.genre = g
                         Metrics.count("genreEdits")
+                        // 直したジャンルを覚える（写真の判定の名前 → ジャンル）と、外れ方の記録
+                        GenreLearn.record(label: meal.visionLabel, genre: g)
+                        AccuracyLog.genreFixed(meal, from: old, to: g)
                     }
                 }
             } label: {
@@ -611,6 +616,7 @@ struct CandidatePicker: View {
         let oldState = (meal.needsCheck, meal.confidence, meal.eatenOut)
         // 直したら覚える（便51）
         Corrections.learn(latitude: meal.latitude, longitude: meal.longitude, wrong: old?.name, right: candidate.name)
+        if old?.key != candidate.key { AccuracyLog.placeFixed(meal, to: candidate, oldName: old?.name) }
         let place = PlaceBook.place(for: candidate, date: meal.date, context: context)
         meal.place = place
         meal.eatenOut = true
@@ -667,6 +673,7 @@ struct CandidatePicker: View {
     private func notShop() {
         let old = meal.place
         Corrections.learn(latitude: meal.latitude, longitude: meal.longitude, wrong: old?.name, right: nil)
+        AccuracyLog.notShop(meal)
         meal.place = nil
         meal.eatenOut = false
         meal.needsCheck = false

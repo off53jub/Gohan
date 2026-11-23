@@ -84,7 +84,8 @@ enum PhotoVision {
         "pizza", "pasta", "spaghetti", "noodles", "ramen", "sushi", "sashimi", "rice", "curry", "soup", "steak", "meat",
         "seafood", "egg", "breakfast", "dumpling", "taco", "burrito", "fries", "fried_chicken", "pancake", "waffle",
         "coffee", "tea", "cocktail", "wine", "beer", "juice", "smoothie", "drink", "beverage", "barbecue", "sausage",
-        "bento", "tofu", "omelet", "crepe", "macaron", "parfait",
+        "bento", "tofu", "omelet", "crepe", "macaron", "parfait", "pho", "udon", "soba", "gyoza", "tempura", "yakitori",
+        "takoyaki", "okonomiyaki", "katsu", "donburi", "onigiri", "miso_soup", "hot_pot", "dim_sum", "spring_roll", "kebab",
     ]
     /// 料理の名前としては使わない、大きすぎるラベル
     static let broadLabels: Set<String> = ["food", "meal", "dish", "drink", "beverage", "fruit", "vegetable"]
@@ -92,6 +93,8 @@ enum PhotoVision {
     struct Look {
         var food: Double
         var label: String
+        /// 食べ物の上位の名前（強さ 0.05 以上を 6 つまで）
+        var labels: [String: Double] = [:]
     }
 
     static func look(_ image: UIImage) -> Look {
@@ -112,7 +115,12 @@ enum PhotoVision {
             }
         }
         if label.isEmpty, food > 0 { label = "food" }
-        return Look(food: food, label: label)
+        var top: [String: Double] = [:]
+        for observation in results.filter({ foodLabels.contains($0.identifier) && $0.confidence >= 0.05 })
+            .sorted(by: { $0.confidence > $1.confidence }).prefix(6) {
+            top[observation.identifier] = Double(observation.confidence)
+        }
+        return Look(food: food, label: label, labels: top)
     }
 
     /// 人の顔を塗りつぶす（便72。AI に送る前に）

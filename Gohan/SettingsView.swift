@@ -227,6 +227,12 @@ struct AdvancedSettingsView: View {
     @State private var videos = ScanSettings.videos
     @State private var confirmReset = false
     @State private var giving = false
+    @State private var webCheck = AISettings.webCheck
+    @State private var googleKey = ""
+    @State private var hotpepperKey = ""
+    @State private var hasGoogle = KeyStore.googleKey != nil
+    @State private var hasHotpepper = KeyStore.hotpepperKey != nil
+    @State private var logURL: URL?
 
     var body: some View {
         Form {
@@ -296,8 +302,58 @@ struct AdvancedSettingsView: View {
                 Toggle("古い写真は充電中・Wi-Fi のときに読む", isOn: $backfillCharging)
                     .onChange(of: backfillCharging) { _, new in ScanSettings.backfillOnlyCharging = new }
                 Toggle("動画からも1コマ拾う", isOn: $videos).onChange(of: videos) { _, new in ScanSettings.videos = new }
+                Toggle("迷ったときだけ、AI にネットで確かめてもらう", isOn: $webCheck).onChange(of: webCheck) { _, new in AISettings.webCheck = new }
             } header: {
                 Text("送り方・読み方")
+            } footer: {
+                Text("ネットで確かめるのは、お店の自信が低いときだけです（1 回 数円）。")
+            }
+            Section {
+                if hasGoogle {
+                    LabeledContent("Google", value: "使っています")
+                    Button("Google の鍵を外す", role: .destructive) { KeyStore.googleKey = nil; hasGoogle = false }
+                } else {
+                    SecureField("Google Places API の鍵", text: $googleKey).textInputAutocapitalization(.never).autocorrectionDisabled()
+                    Button("保存") {
+                        KeyStore.googleKey = googleKey.trimmingCharacters(in: .whitespacesAndNewlines)
+                        googleKey = ""
+                        hasGoogle = KeyStore.googleKey != nil
+                    }
+                    .disabled(googleKey.isEmpty)
+                }
+                if hasHotpepper {
+                    LabeledContent("ホットペッパー", value: "使っています")
+                    Button("ホットペッパーの鍵を外す", role: .destructive) { KeyStore.hotpepperKey = nil; hasHotpepper = false }
+                } else {
+                    SecureField("ホットペッパーグルメの鍵", text: $hotpepperKey).textInputAutocapitalization(.never).autocorrectionDisabled()
+                    Button("保存") {
+                        KeyStore.hotpepperKey = hotpepperKey.trimmingCharacters(in: .whitespacesAndNewlines)
+                        hotpepperKey = ""
+                        hasHotpepper = KeyStore.hotpepperKey != nil
+                    }
+                    .disabled(hotpepperKey.isEmpty)
+                }
+            } header: {
+                Text("お店の候補を増やす")
+            } footer: {
+                Text("Apple のマップに載っていないお店も候補に入ります。鍵は自分で取って、この iPhone にだけ置きます。写真の位置（だいたいの場所）がそれぞれの会社に送られます。今月の呼び出し: Google \(Metrics.value("googleCalls")) 回・ホットペッパー \(Metrics.value("hotpepperCalls")) 回・ネットで確かめた \(Metrics.value("webChecks")) 回")
+            }
+            Section {
+                let s = AccuracyLog.summary(AccuracyLog.load())
+                LabeledContent("合ってた", value: "\(s.hits)")
+                LabeledContent("お店を直した（候補に入っていた）", value: "\(s.fixedInList)")
+                LabeledContent("お店を直した（候補に無かった）", value: "\(s.fixedNotInList)")
+                LabeledContent("お店ではなかった", value: "\(s.notShop)")
+                LabeledContent("ジャンルを直した", value: "\(s.genreFixed)（うち端末だけで決めた \(s.genreFromPhoto)）")
+                if let logURL {
+                    ShareLink(item: logURL) { Label("外れ方の記録を送る", systemImage: "square.and.arrow.up") }
+                } else {
+                    Button("外れ方の記録を書き出す") { logURL = AccuracyLog.exportURL() }
+                }
+            } header: {
+                Text("外れ方（これまで）")
+            } footer: {
+                Text("「候補に無かった」が多ければお店の候補の取り元を増やし、「候補に入っていた」が多ければ選び方を直します。")
             }
             Section {
                 LabeledContent("今月 直した回数", value: "\(Metrics.value("corrections") + Metrics.value("dishEdits") + Metrics.value("genreEdits"))")
@@ -599,6 +655,10 @@ struct PrivacyView: View {
                 Text("・1回の食事につき、料理の写真 3 枚までと、看板・メニューの写真 2 枚まで（小さくした JPEG）")
                 Text("・撮った日時、だいたいの地名、お店の候補の名前と距離、写真から読めた文字、予定の名前（予定表を使うときだけ）")
                 Text("・人の顔は、送る前に塗りつぶします（設定で変えられます）")
+                Text("・お店に迷ったときだけ、街の名前・写真から読めた文字・料理のジャンルを送って、AI にネットで探してもらいます（設定で止められます）")
+            }
+            Section("鍵を入れたときだけ送るもの") {
+                Text("・Google・ホットペッパーに、写真のだいたいの場所と、探すお店の名前")
             }
             Section("送らないもの") {
                 Text("・写真の元のファイル、写真の正確な位置の数字、メモ、ほかの写真")

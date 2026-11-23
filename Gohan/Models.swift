@@ -252,8 +252,10 @@ enum Genre {
         "ファストフード", "カフェ", "スイーツ", "パン", "バー", "鍋", "お好み焼き", "その他",
     ]
 
-    /// MapKit のお店の種類から（分からなければ nil）
+    /// お店の種類から（MapKit・Google・ホットペッパー。分からなければ nil）
     static func from(category: String) -> String? {
+        if category.hasPrefix("genre:") { return hotpepper[String(category.dropFirst(6))] }
+        if category.hasPrefix("google:") { return google[String(category.dropFirst(7))] }
         switch category {
         case "MKPOICategoryCafe": return "カフェ"
         case "MKPOICategoryBakery": return "パン"
@@ -261,4 +263,23 @@ enum Genre {
         default: return nil
         }
     }
+
+    /// ホットペッパーのジャンル名
+    static let hotpepper: [String: String] = [
+        "居酒屋": "居酒屋", "ダイニングバー・バル": "バー", "バー・カクテル": "バー", "和食": "和食", "洋食": "洋食",
+        "イタリアン・フレンチ": "イタリアン", "中華": "中華", "焼肉・ホルモン": "焼肉", "韓国料理": "韓国料理",
+        "アジア・エスニック料理": "エスニック", "各国料理": "エスニック", "ラーメン": "ラーメン",
+        "お好み焼き・もんじゃ": "お好み焼き", "カフェ・スイーツ": "カフェ",
+    ]
+
+    /// Google のお店の種類
+    static let google: [String: String] = [
+        "ramen_restaurant": "ラーメン", "sushi_restaurant": "寿司", "japanese_restaurant": "和食", "chinese_restaurant": "中華",
+        "korean_restaurant": "韓国料理", "italian_restaurant": "イタリアン", "pizza_restaurant": "イタリアン",
+        "french_restaurant": "フレンチ", "hamburger_restaurant": "ハンバーガー", "fast_food_restaurant": "ファストフード",
+        "cafe": "カフェ", "coffee_shop": "カフェ", "bakery": "パン", "bar": "バー", "pub": "バー", "wine_bar": "バー",
+        "barbecue_restaurant": "焼肉", "indian_restaurant": "エスニック", "thai_restaurant": "エスニック",
+        "vietnamese_restaurant": "エスニック", "mexican_restaurant": "エスニック", "dessert_shop": "スイーツ",
+        "ice_cream_shop": "スイーツ", "confectionery": "スイーツ", "steak_house": "洋食", "seafood_restaurant": "和食",
+    ]
 }

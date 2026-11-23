@@ -17,9 +17,11 @@ struct SeenPhoto: Codable, Equatable {
     var isVideo: Bool = false
     /// カメラで撮った写真ではない（SNS から保存した画像など。便22）
     var noCamera: Bool = false
+    /// 食べ物の上位の名前と強さ（ジャンルを見分けるため。2026-11-24）
+    var labels: [String: Double] = [:]
 
     init(id: String, date: Date, latitude: Double?, longitude: Double?, accuracy: Double?, food: Double, label: String,
-         used: Bool = false, isVideo: Bool = false, noCamera: Bool = false) {
+         used: Bool = false, isVideo: Bool = false, noCamera: Bool = false, labels: [String: Double] = [:]) {
         self.id = id
         self.date = date
         self.latitude = latitude
@@ -30,6 +32,7 @@ struct SeenPhoto: Codable, Equatable {
         self.used = used
         self.isVideo = isVideo
         self.noCamera = noCamera
+        self.labels = labels
     }
 
     // 前の版で覚えた写真（isVideo・noCamera が無い）も読めるように
@@ -45,6 +48,7 @@ struct SeenPhoto: Codable, Equatable {
         used = try c.decodeIfPresent(Bool.self, forKey: .used) ?? false
         isVideo = try c.decodeIfPresent(Bool.self, forKey: .isVideo) ?? false
         noCamera = try c.decodeIfPresent(Bool.self, forKey: .noCamera) ?? false
+        labels = try c.decodeIfPresent([String: Double].self, forKey: .labels) ?? [:]
     }
 }
 

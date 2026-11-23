@@ -68,6 +68,7 @@ final class Scanner {
         }
         let context = container.mainContext
         let allMeals = (try? context.fetch(FetchDescriptor<Meal>())) ?? []
+        fixOldGenres(allMeals)
         dishBook = Matcher.dishBook(allMeals.map(\.dishes))
 
         var seen = SeenStore.load()
@@ -142,6 +143,19 @@ final class Scanner {
         return added.count
     }
 
+    /// 前の版で、端末だけで決めたジャンル（ラーメンが「スープ」「パスタ」など）を、お店の名前から1回だけ直す。
+    /// 本人が直したもの（ジャンルが写真の判定と違うもの）は触らない（2026-11-24）
+    private func fixOldGenres(_ meals: [Meal]) {
+        guard !UserDefaults.standard.bool(forKey: "fix.genre.v1") else { return }
+        UserDefaults.standard.set(true, forKey: "fix.genre.v1")
+        for meal in meals where meal.source == "device" || meal.source == "known" {
+            guard let mapped = Matcher.dishNames[meal.visionLabel], meal.genre == mapped.genre || meal.genre == "その他" else { continue }
+            guard let place = meal.place, let g = Matcher.genre(fromText: place.name), g != meal.genre else { continue }
+            meal.genre = g
+            if meal.dishes == [mapped.dish] { meal.dishes = g == "ラーメン" ? ["ラーメン"] : [] }
+        }
+    }
+
     /// 写真1枚を端末の中で見る
     private func look(_ asset: PHAsset) async -> SeenPhoto {
         let isVideo = asset.mediaType == .video
@@ -171,7 +185,8 @@ final class Scanner {
             food: result.food,
             label: result.label,
             isVideo: isVideo,
-            noCamera: noCamera
+            noCamera: noCamera,
+            labels: result.labels
         )
     }
 
@@ -253,21 +268,28 @@ final class Scanner {
         let receipt = Matcher.receiptNames(lines)
         let event = CalendarClue.event(around: first.date)
 
+        // 写真のジャンル（写真の上位の名前・看板やメニューの文字・本人が直したジャンル。2026-11-24）
+        let labels = Matcher.mergeLabels(group)
+        let photoGuess = Matcher.guessGenre(labels: labels, lines: lines + receipt, shopName: nil, learned: GenreLearn.lookup(label))
+
         // お店の候補（近くの飲食店・写真の文字で探したお店・予定の場所・前に行ったお店）
+        // 位置があいまい（ビルの中・地下・位置を借りた写真）なら、広く探して候補も多めにする（5）
+        let accuracy = group.compactMap(\.accuracy).filter { $0 > 0 }.min() ?? 50
+        let indoor = accuracy > 65
         var candidates: [PlaceCandidate] = []
         if let spot, meal.spot.isEmpty {
-            let accuracy = group.compactMap(\.accuracy).filter { $0 > 0 }.min() ?? 50
-            let radius = min(300, max(80, accuracy * 2))
-            var lists = [await PlaceFinder.nearby(latitude: spot.latitude, longitude: spot.longitude, radius: radius)]
+            let radius = indoor ? 450 : min(300, max(80, accuracy * 2))
+            var lists = [await PlaceFinder.nearbyAll(latitude: spot.latitude, longitude: spot.longitude, radius: radius)]
             var queries = receipt + Matcher.searchableLines(lines)
             if let event { queries.append(event) }
             for query in queries.prefix(5) {
-                lists.append(await PlaceFinder.search(query, latitude: spot.latitude, longitude: spot.longitude, radius: 700))
+                lists.append(await PlaceFinder.searchAll(query, latitude: spot.latitude, longitude: spot.longitude, radius: 700))
             }
             lists.append(PlaceBook.visited(near: spot.latitude, spot.longitude, context: context))
             candidates = PlaceFinder.merge(lists)
         }
-        var ranked = Array(Matcher.rank(candidates, lines: lines + receipt, dishLabel: label).prefix(12))
+        var ranked = Matcher.rank(candidates, lines: lines + receipt, dishLabel: label)
+        ranked = Array(Matcher.applyGenre(ranked, photoGenre: photoGuess?.genre).prefix(indoor ? 20 : 12))
         if let spot {
             let learned = Corrections.lookup(latitude: spot.latitude, longitude: spot.longitude)
             ranked = Matcher.applyCorrections(ranked, right: learned.right, wrong: learned.wrong)
@@ -282,7 +304,7 @@ final class Scanner {
             let light = AISettings.lightForEasy && (known != nil || !meal.spot.isEmpty || Matcher.isEasy(ranked))
             let prompt = ClaudeVision.prompt(date: first.date, area: meal.area, candidates: known.map { [$0] } ?? ranked, lines: lines,
                                              foodCount: foodJPEGs.count, clueCount: clueJPEGs.count, event: event, receipt: receipt,
-                                             knownPlace: known.map { "\($0.name)（\($0.address)）" })
+                                             knownPlace: known.map { "\($0.name)（\($0.address)）" }, indoor: indoor)
             if old, AISettings.batchOld, known == nil, meal.spot.isEmpty {
                 // 古い写真は急がないので、まとめ処理で半額に（便13）。答えが来るまでは端末で決めておく
                 BatchQueue.enqueue(mealID: meal.id, body: ClaudeVision.body(food: foodJPEGs, clues: Array(clueJPEGs), prompt: prompt, light: false))
@@ -301,17 +323,67 @@ final class Scanner {
         }
         if let known, verdict == nil || verdict?.eaten_out == true {
             // 前に行ったお店は、AI に聞かなくても決める（便11）
-            apply(verdict, to: meal, ranked: [known], forcedPick: known, context: context)
+            apply(verdict, to: meal, ranked: [known], forcedPick: known, context: context, labels: labels, lines: lines + receipt)
             if verdict == nil { meal.source = "known" }
         } else {
-            apply(verdict, to: meal, ranked: ranked, forcedPick: nil, context: context)
+            apply(verdict, to: meal, ranked: ranked, forcedPick: nil, context: context, labels: labels, lines: lines + receipt)
+        }
+
+        if let spot, meal.eatenOut, meal.spot.isEmpty, known == nil, !meal.hidden {
+            // 2. AI が写真から読んだ店名で、地図を探し直す（候補に無かったとき・選んだお店と名前が合わないとき）
+            if let seen = verdict?.name_seen, !seen.isEmpty,
+               let found = await research(name: seen, current: meal.place, latitude: spot.latitude, longitude: spot.longitude) {
+                setPlace(found, on: meal, confidence: 0.75, reason: "写真の店名「\(seen)」で探し直しました", context: context)
+                meal.source += "+name"
+            }
+            // 3. まだ迷っていれば、AI にネットで確かめてもらう（新しい写真だけ・設定でオフにできる）
+            if meal.confidence < 0.6, !old, AISettings.webCheck, ClaudeLink.isReady, Spend.canSpend {
+                status = "ネットで確かめています"
+                let hint = WebCheck.Hint(area: [meal.region, meal.area].filter { !$0.isEmpty }.joined(separator: " "),
+                                         nameSeen: verdict?.name_seen ?? "", genre: meal.genre, dishes: meal.dishes,
+                                         candidates: ranked.prefix(5).map(\.name), lines: Array((receipt + lines).prefix(15)))
+                if let answer = try? await WebCheck.ask(hint), answer.confidence >= 0.5,
+                   let found = await research(name: answer.name, current: meal.place, latitude: spot.latitude, longitude: spot.longitude, radius: 1500) {
+                    setPlace(found, on: meal, confidence: min(0.85, answer.confidence), reason: "ネットで確かめました（\(answer.name)）", context: context)
+                    meal.source += "+web"
+                }
+            }
         }
         context.insert(meal)
         return meal.hidden ? nil : meal
     }
 
+    /// 名前で探し直す。いまのお店と名前がもう合っていれば nil
+    private func research(name: String, current: Place?, latitude: Double, longitude: Double, radius: Double = 1000) async -> PlaceCandidate? {
+        let core = Matcher.coreName(name)
+        if let current, Matcher.similarity(Matcher.coreName(current.name), core) >= 0.6 { return nil }
+        let results = await PlaceFinder.searchAll(name, latitude: latitude, longitude: longitude, radius: radius)
+        guard let best = results.max(by: { Matcher.similarity(Matcher.coreName($0.name), core) < Matcher.similarity(Matcher.coreName($1.name), core) }) else {
+            return nil
+        }
+        let score = Matcher.similarity(Matcher.coreName(best.name), core)
+        // いまお店が決まっているなら、よりはっきり合うときだけ置きかえる
+        return score >= (current == nil ? 0.6 : 0.8) ? best : nil
+    }
+
+    private func setPlace(_ candidate: PlaceCandidate, on meal: Meal, confidence: Double, reason: String, context: ModelContext) {
+        let place = PlaceBook.place(for: candidate, date: meal.date, context: context)
+        meal.place = place
+        meal.eatenOut = true
+        meal.confidence = confidence
+        meal.reason = reason
+        meal.needsCheck = confidence < Matcher.sureLine
+        if meal.genre == "その他", let g = Matcher.candidateGenre(candidate) { meal.genre = g }
+        var list = meal.candidates
+        if !list.contains(where: { $0.key == candidate.key }) {
+            list.insert(candidate, at: 0)
+            meal.candidates = list
+        }
+    }
+
     /// 答え（無ければ端末の判断）を食事に書く
-    func apply(_ verdict: MealVerdict?, to meal: Meal, ranked: [PlaceCandidate], forcedPick: PlaceCandidate?, context: ModelContext) {
+    func apply(_ verdict: MealVerdict?, to meal: Meal, ranked: [PlaceCandidate], forcedPick: PlaceCandidate?, context: ModelContext,
+               labels: [String: Double] = [:], lines: [String] = []) {
         var pick: PlaceCandidate?
         var confidence = 0.0
         let receipt = meal.reason.contains("レシート")
@@ -331,6 +403,8 @@ final class Scanner {
                 confidence = verdict.place_confidence
             }
             meal.reason = pick == nil ? "" : (verdict.reason.isEmpty ? Matcher.reason(for: pick, source: meal.source, receipt: receipt) : verdict.reason)
+            // AI が「その他」にしたら、お店の名前から分かるジャンルを使う
+            if meal.genre == "その他", let pick, let g = Matcher.candidateGenre(pick) { meal.genre = g }
         } else {
             if let forcedPick {
                 pick = forcedPick
@@ -341,13 +415,17 @@ final class Scanner {
                 meal.eatenOut = false
                 confidence = 1
             }
-            if let dish = Matcher.dishNames[meal.visionLabel] {
-                meal.dishes = Matcher.canonicalDishes([dish.dish], book: dishBook)
-                meal.genre = dish.genre
-                if Matcher.isLight(meal.visionLabel) { meal.kind = ["coffee", "tea", "juice", "smoothie", "drink", "beverage"].contains(meal.visionLabel) ? "drink" : "snack" }
-            }
-            if meal.genre == "その他", let pick, let g = Genre.from(category: pick.category) { meal.genre = g }
             if pick != nil, pick!.score < 0.25, forcedPick == nil { pick = nil }
+            // ジャンルと料理: お店の名前 → 写真の文字 → 本人が直したジャンル → 写真の判定 の順に見る（2026-11-24）
+            let seen = labels.isEmpty && !meal.visionLabel.isEmpty ? [meal.visionLabel: 0.5] : labels
+            if let guess = Matcher.guessGenre(labels: seen, lines: lines, shopName: pick?.name, learned: GenreLearn.lookup(meal.visionLabel)) {
+                meal.genre = guess.genre
+                if let dish = guess.dish { meal.dishes = Matcher.canonicalDishes([dish], book: dishBook) }
+            }
+            if Matcher.isLight(meal.visionLabel), meal.genre == "カフェ" || meal.genre == "スイーツ" || meal.genre == "その他" {
+                meal.kind = ["coffee", "tea", "juice", "smoothie", "drink", "beverage"].contains(meal.visionLabel) ? "drink" : "snack"
+            }
+            if meal.genre == "その他", let pick, let g = Matcher.candidateGenre(pick) { meal.genre = g }
             meal.reason = Matcher.reason(for: pick, source: forcedPick != nil ? "known" : "device", receipt: false)
         }
         if let pick, meal.eatenOut {

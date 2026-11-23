@@ -424,6 +424,7 @@ struct ReviewView: View {
         meal.confidence = 1
         try? context.save()
         Metrics.count("confirmed")
+        AccuracyLog.hit(meal)
     }
 
     /// あとで（今回は見ない。次に開いたときに後ろへ回すため、自信だけ少し上げる）
