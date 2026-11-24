@@ -1,0 +1,361 @@
+# /// script
+# requires-python = ">=3.11"
+# dependencies = ["pillow", "pillow-heif"]
+# ///
+"""ごはん帖: PC にある写真（pCloud・Google フォトの書き出し）から、取り込み用のファイルを作る。
+
+ご飯かどうか・料理の名前・看板の店名は、Claude Code の会話の中で見る（アプリの API は使わない）。
+流れ（くわしくは README.md）:
+  1. scan    写真の一覧（撮った時刻・位置）を作る          → work/photos.json
+  2. sheets  20 枚ずつの一覧画像を作る                   → work/sheets/*.jpg
+     （Claude が見て work/screen.json を書く: {"p0001": "food" | "clue" | "no"}）
+  3. group   ご飯の写真を食事にまとめ、食事ごとの画像を作る → work/meals.json, work/meals/*.jpg
+     （Claude が見て work/verdicts.json を書く）
+  4. pack    アプリで読むファイルを作る                   → ごはん帖の取り込み-*.json
+
+写真は作業フォルダ（既定 D:\\GohanImport）にだけ置く。公開リポジトリには入れない。
+"""
+from __future__ import annotations
+
+import argparse
+import base64
+import io
+import json
+import math
+import os
+import subprocess
+import sys
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+from PIL import Image, ImageDraw, ImageFont, ImageOps
+
+try:
+    import pillow_heif
+
+    pillow_heif.register_heif_opener()
+except ImportError:  # HEIC が無ければ要らない
+    pass
+
+DEFAULT_WORK = Path(r"D:\GohanImport")
+JST = timezone(timedelta(hours=9))
+PHOTO_EXT = {".heic", ".heif", ".jpg", ".jpeg"}
+MEAL_GAP_MIN = 40      # アプリの Matcher.groupMeals と同じ
+MEAL_GAP_M = 250
+CLUE_WINDOW_MIN = 30
+CLUE_DIST_M = 300
+GENRES = ["ラーメン", "つけ麺", "そば・うどん", "寿司", "和食", "定食", "丼", "焼肉", "焼き鳥", "居酒屋",
+          "中華", "韓国料理", "カレー", "エスニック", "イタリアン", "フレンチ", "洋食", "ハンバーガー",
+          "ファストフード", "カフェ", "スイーツ", "パン", "バー", "鍋", "お好み焼き", "その他"]
+
+
+# ---------------------------------------------------------------- 共通
+
+def load(path: Path, default):
+    return json.loads(path.read_text(encoding="utf-8")) if path.exists() else default
+
+
+def save(path: Path, data) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
+    tmp.replace(path)
+
+
+def distance_m(a, b) -> float | None:
+    if a.get("lat") is None or b.get("lat") is None:
+        return None
+    r = 6371000
+    p1, p2 = math.radians(a["lat"]), math.radians(b["lat"])
+    dp = p2 - p1
+    dl = math.radians(b["lon"] - a["lon"])
+    h = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
+    return 2 * r * math.asin(math.sqrt(h))
+
+
+def when(p) -> datetime:
+    return datetime.fromisoformat(p["date"])
+
+
+def open_image(path: str, side: int) -> Image.Image:
+    im = Image.open(path)
+    im = ImageOps.exif_transpose(im)
+    im.thumbnail((side, side))
+    return im.convert("RGB")
+
+
+def font(size: int):
+    for name in ("meiryo.ttc", "msgothic.ttc", "arial.ttf"):
+        try:
+            return ImageFont.truetype(name, size)
+        except OSError:
+            continue
+    return ImageFont.load_default()
+
+
+# ---------------------------------------------------------------- 1. scan
+
+def parse_exif_date(value: str | None, offset: str | None) -> datetime | None:
+    if not value or value.startswith("0000"):
+        return None
+    try:
+        d = datetime.strptime(value[:19], "%Y:%m:%d %H:%M:%S")
+    except ValueError:
+        return None
+    tz = JST
+    if offset and len(offset) >= 6 and offset[0] in "+-":
+        sign = 1 if offset[0] == "+" else -1
+        tz = timezone(sign * timedelta(hours=int(offset[1:3]), minutes=int(offset[4:6])))
+    return d.replace(tzinfo=tz)
+
+
+def takeout_sidecar(path: Path) -> dict | None:
+    """Google フォトの書き出し（Takeout）は、時刻と位置を横の .json に入れている"""
+    for cand in (path.with_name(path.name + ".json"), path.with_name(path.name + ".supplemental-metadata.json")):
+        if cand.exists():
+            try:
+                return json.loads(cand.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                return None
+    return None
+
+
+def cmd_scan(args) -> None:
+    work = Path(args.work)
+    since = datetime.fromisoformat(args.since).replace(tzinfo=JST) if args.since else None
+    until = datetime.fromisoformat(args.until).replace(tzinfo=JST) + timedelta(days=1) if args.until else None
+    old = {p["path"]: p for p in load(work / "photos.json", [])}
+    rows = []
+    for source in args.source:
+        print(f"写真を読んでいます: {source}", flush=True)
+        out = subprocess.run(
+            ["exiftool", "-json", "-n", "-r", "-q", "-q", "-charset", "filename=utf8",
+             *sum((["-ext", e.lstrip(".")] for e in PHOTO_EXT), []),
+             "-DateTimeOriginal", "-OffsetTimeOriginal", "-CreateDate", "-GPSLatitude", "-GPSLongitude",
+             "-GPSHPositioningError", "-Model", source],
+            capture_output=True, check=False)
+        rows += json.loads(out.stdout.decode("utf-8") or "[]")
+    photos = []
+    for r in rows:
+        path = Path(r["SourceFile"])
+        date = parse_exif_date(r.get("DateTimeOriginal"), r.get("OffsetTimeOriginal"))
+        lat, lon = r.get("GPSLatitude"), r.get("GPSLongitude")
+        side = takeout_sidecar(path) if date is None or lat is None else None
+        if side:
+            ts = (side.get("photoTakenTime") or {}).get("timestamp")
+            if date is None and ts:
+                date = datetime.fromtimestamp(int(ts), tz=timezone.utc).astimezone(JST)
+            geo = side.get("geoDataExif") or side.get("geoData") or {}
+            if lat is None and geo.get("latitude"):
+                lat, lon = geo["latitude"], geo["longitude"]
+        # カメラで撮っていない画像（保存した画像・スクリーンショット）は外す
+        if date is None or not r.get("Model"):
+            continue
+        if (since and date < since) or (until and date >= until):
+            continue
+        photos.append({"path": str(path), "date": date.isoformat(timespec="seconds"),
+                       "lat": lat, "lon": lon, "acc": r.get("GPSHPositioningError")})
+    photos.sort(key=lambda p: p["date"])
+    # 前に付けた番号は変えない（Claude の答えとずれないように）
+    used = {int(p["id"][1:]) for p in old.values()}
+    next_id = max(used, default=0) + 1
+    for p in photos:
+        if p["path"] in old:
+            p["id"] = old[p["path"]]["id"]
+        else:
+            p["id"] = f"p{next_id:05d}"
+            next_id += 1
+    save(work / "photos.json", photos)
+    print(f"{len(photos)} 枚（新しく {sum(1 for p in photos if p['path'] not in old)} 枚）", flush=True)
+
+
+# ---------------------------------------------------------------- 2. sheets
+
+def make_thumb(work: Path, p) -> Path | None:
+    out = work / "thumbs" / f"{p['id']}.jpg"
+    if out.exists():
+        return out
+    try:
+        im = open_image(p["path"], 768)
+    except Exception as e:  # 壊れた写真・読めない形式
+        print(f"  読めません: {p['path']} ({e})", file=sys.stderr)
+        return None
+    out.parent.mkdir(parents=True, exist_ok=True)
+    im.save(out, quality=82)
+    return out
+
+
+def tile(images: list[tuple[str, Path]], cols: int, cell: int, out: Path) -> None:
+    rows = math.ceil(len(images) / cols)
+    sheet = Image.new("RGB", (cols * cell, rows * (cell + 22)), "white")
+    draw = ImageDraw.Draw(sheet)
+    f = font(16)
+    for i, (label, path) in enumerate(images):
+        x, y = (i % cols) * cell, (i // cols) * (cell + 22)
+        im = Image.open(path)
+        im.thumbnail((cell - 4, cell - 4))
+        sheet.paste(im, (x + (cell - im.width) // 2, y + 22 + (cell - im.height) // 2))
+        draw.text((x + 4, y + 2), label, fill="black", font=f)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    sheet.save(out, quality=80)
+
+
+def cmd_sheets(args) -> None:
+    work = Path(args.work)
+    photos = load(work / "photos.json", [])
+    screen = load(work / "screen.json", {})
+    todo = [p for p in photos if p["id"] not in screen]
+    print(f"小さな写真を作っています: {len(todo)} 枚", flush=True)
+    with ThreadPoolExecutor(max_workers=args.threads) as pool:
+        thumbs = list(pool.map(lambda p: make_thumb(work, p), todo))
+    ready = [(p, t) for p, t in zip(todo, thumbs) if t]
+    for old in (work / "sheets").glob("*.jpg"):
+        old.unlink()
+    per = 20
+    for n in range(0, len(ready), per):
+        chunk = ready[n:n + per]
+        tile([(f"{p['id']} {when(p):%m/%d %H:%M}", t) for p, t in chunk], cols=5, cell=256,
+             out=work / "sheets" / f"sheet{n // per + 1:03d}.jpg")
+    print(f"一覧画像 {math.ceil(len(ready) / per)} 枚 → {work / 'sheets'}", flush=True)
+
+
+# ---------------------------------------------------------------- 3. group
+
+def cmd_group(args) -> None:
+    work = Path(args.work)
+    photos = load(work / "photos.json", [])
+    screen = load(work / "screen.json", {})
+    done = load(work / "verdicts.json", {})
+    food = [p for p in photos if screen.get(p["id"]) == "food"]
+    clues = [p for p in photos if screen.get(p["id"]) == "clue"]
+    groups: list[list[dict]] = []
+    for p in food:
+        last = groups[-1][-1] if groups else None
+        if last and (when(p) - when(last)) <= timedelta(minutes=MEAL_GAP_MIN):
+            d = distance_m(p, last)
+            if d is None or d <= MEAL_GAP_M:
+                groups[-1].append(p)
+                continue
+        groups.append([p])
+    meals = []
+    for g in groups:
+        start, end = when(g[0]), when(g[-1])
+        center = next((x for x in g if x.get("lat") is not None), None)
+        near = [c for c in clues
+                if start - timedelta(minutes=CLUE_WINDOW_MIN) <= when(c) <= end + timedelta(minutes=CLUE_WINDOW_MIN)
+                and (center is None or (distance_m(c, center) or 0) <= CLUE_DIST_M)]
+        mid = "m" + g[0]["id"][1:]   # 最初の写真の番号から作る（やり直しても同じ番号）
+        meals.append({"id": mid, "food": [x["id"] for x in g], "clues": [c["id"] for c in near][:3]})
+    save(work / "meals.json", meals)
+    by_id = {p["id"]: p for p in photos}
+    todo = [m for m in meals if m["id"] not in done]
+    for old in (work / "meals").glob("*.jpg"):
+        old.unlink()
+    for m in todo:
+        ids = spread(m["food"], 4) + m["clues"][:2]
+        items = [(f"{i} {'看板など' if i in m['clues'] else '料理'} {when(by_id[i]):%Y/%m/%d %H:%M}", work / "thumbs" / f"{i}.jpg")
+                 for i in ids if (work / "thumbs" / f"{i}.jpg").exists()]
+        tile(items, cols=3, cell=512, out=work / "meals" / f"{m['id']}.jpg")
+    print(f"食事 {len(meals)} 回（まだ見ていない {len(todo)} 回）→ {work / 'meals'}", flush=True)
+
+
+def spread(ids: list[str], count: int) -> list[str]:
+    if len(ids) <= count:
+        return list(ids)
+    step = (len(ids) - 1) / (count - 1)
+    return [ids[round(i * step)] for i in range(count)]
+
+
+# ---------------------------------------------------------------- 4. pack
+
+def jpeg_b64(path: str, side: int) -> str:
+    im = open_image(path, side)
+    buf = io.BytesIO()
+    im.save(buf, format="JPEG", quality=75)
+    return base64.b64encode(buf.getvalue()).decode("ascii")
+
+
+def check_verdict(mid: str, v: dict) -> list[str]:
+    problems = []
+    for key in ("is_meal", "eaten_out", "genre", "dishes", "summary", "kind", "name_seen"):
+        if key not in v:
+            problems.append(f"{mid}: {key} がありません")
+    if v.get("genre") not in GENRES:
+        problems.append(f"{mid}: genre「{v.get('genre')}」は一覧にありません")
+    if v.get("kind") not in ("meal", "cafe", "snack", "drink"):
+        problems.append(f"{mid}: kind「{v.get('kind')}」")
+    return problems
+
+
+def cmd_pack(args) -> None:
+    work = Path(args.work)
+    photos = {p["id"]: p for p in load(work / "photos.json", [])}
+    meals = load(work / "meals.json", [])
+    verdicts = load(work / "verdicts.json", {})
+    packed = set(load(work / "packed.json", []))
+    problems = [x for m in meals if m["id"] in verdicts for x in check_verdict(m["id"], verdicts[m["id"]])]
+    if problems:
+        sys.exit("答えに足りないところがあります:\n" + "\n".join(problems))
+    todo = [m for m in meals if m["id"] in verdicts and (args.all or m["id"] not in packed)]
+    if not todo:
+        print("新しく入れる食事はありません")
+        return
+    out_meals = []
+    for m in todo:
+        v = verdicts[m["id"]]
+        food = [photos[i] for i in m["food"] if i in photos]
+        located = [p for p in food if p.get("lat") is not None]
+        acc = [p["acc"] for p in located if p.get("acc")]
+        verdict = {"is_meal": bool(v["is_meal"]), "eaten_out": bool(v["eaten_out"]), "place_index": -1,
+                   "place_confidence": 0, "genre": v["genre"], "dishes": v["dishes"], "summary": v["summary"],
+                   "kind": v["kind"], "reason": "", "name_seen": v.get("name_seen", "")}
+        out_meals.append({
+            "date": food[0]["date"], "endDate": food[-1]["date"],
+            "latitude": located[0]["lat"] if located else None,
+            "longitude": located[0]["lon"] if located else None,
+            "accuracy": min(acc) if acc else None,
+            "verdict": verdict, "lines": v.get("lines", []),
+            "photos": [{"date": p["date"], "jpeg": jpeg_b64(p["path"], 1280)} for p in spread([p for p in food], 6)]
+            if v["is_meal"] else [],
+        })
+        print(f"  {m['id']} {food[0]['date'][:16]} {v['summary']}", flush=True)
+    stamp = datetime.now(JST).strftime("%Y%m%d-%H%M")
+    out = Path(args.out or work) / f"ごはん帖の取り込み-{stamp}.json"
+    data = {"kind": "gohan.import", "version": 1, "made": datetime.now(JST).isoformat(timespec="seconds"),
+            "source": args.label, "meals": out_meals}
+    out.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    save(work / "packed.json", sorted(packed | {m["id"] for m in todo}))
+    size = out.stat().st_size / 1_000_000
+    print(f"{len(out_meals)} 食 → {out}（{size:.1f} MB）")
+
+
+# ---------------------------------------------------------------- main
+
+def main() -> None:
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--work", default=str(DEFAULT_WORK), help="作業フォルダ（写真の写しを置く。リポジトリの外に）")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    s = sub.add_parser("scan")
+    s.add_argument("--source", action="append", required=True, help="写真のフォルダ（何回でも）")
+    s.add_argument("--since", help="この日から（YYYY-MM-DD）")
+    s.add_argument("--until", help="この日まで（YYYY-MM-DD）")
+    s.set_defaults(func=cmd_scan)
+    s = sub.add_parser("sheets")
+    s.add_argument("--threads", type=int, default=8)
+    s.set_defaults(func=cmd_sheets)
+    sub.add_parser("group").set_defaults(func=cmd_group)
+    s = sub.add_parser("pack")
+    s.add_argument("--out", help="ファイルを置くフォルダ（既定は作業フォルダ）")
+    s.add_argument("--label", default="PC", help="どこの写真か（アプリに表示）")
+    s.add_argument("--all", action="store_true", help="前に入れた食事も入れ直す")
+    s.set_defaults(func=cmd_pack)
+    args = ap.parse_args()
+    if Path(args.work).resolve().is_relative_to(Path(__file__).resolve().parents[2]):
+        sys.exit("作業フォルダはリポジトリの外にしてください（写真が公開されないように）")
+    args.func(args)
+
+
+if __name__ == "__main__":
+    os.environ.setdefault("PYTHONUTF8", "1")
+    main()
