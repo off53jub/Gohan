@@ -3,8 +3,9 @@ import Security
 
 /// 鍵は端末のキーチェーンにだけ置く（コードにもリポジトリにも書かない）
 enum KeyStore {
+    /// Claude の鍵（端末で入れたもの → 無ければ組み立てのときに入れたもの）
     static var claudeKey: String? {
-        get { readValue("com.off53jub.gohan.claude") }
+        get { readValue("com.off53jub.gohan.claude") ?? builtIn("ClaudeKey") }
         set { writeValue("com.off53jub.gohan.claude", newValue) }
     }
 
