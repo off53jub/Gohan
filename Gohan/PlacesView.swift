@@ -57,12 +57,6 @@ struct WantView: View {
             }
             .background(Ink.ground)
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        Text("また行きたい").font(.brush(24, relativeTo: .title)).foregroundStyle(Ink.ai)
-                        Text("\(places.count)軒").font(.footnote).foregroundStyle(Ink.hai)
-                    }
-                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button { adding = true } label: { Image(systemName: "plus").accessibilityLabel("行ってみたいお店を足す") }
                 }

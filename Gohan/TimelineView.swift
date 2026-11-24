@@ -58,9 +58,6 @@ struct TimelineView: View {
                     ThumbCache.shared.prefetch(meals.prefix(12).compactMap { $0.photoIDs.first }, side: 800)
                 }
                 .toolbar {
-                    ToolbarItem(placement: .topBarLeading) {
-                        Text("ごはん帖").font(.brush(26, relativeTo: .title)).foregroundStyle(Ink.ai)
-                    }
                     ToolbarItemGroup(placement: .topBarTrailing) {
                         Menu {
                             ForEach(months) { month in
