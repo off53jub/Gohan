@@ -132,4 +132,12 @@ final class NewRulesTests: XCTestCase {
         let v = try JSONDecoder().decode(MealVerdict.self, from: Data(json.utf8))
         XCTAssertEqual(v.kind, "meal")
     }
+
+    // ふだんは Sonnet。答えたモデルの名前で値段を数える
+    func testModelPrices() {
+        XCTAssertEqual(AIModel.main, "claude-sonnet-5-5")
+        XCTAssertEqual(AIModel.price("claude-sonnet-5-5").input, 2.0)
+        XCTAssertEqual(AIModel.price("claude-haiku-5-5").output, 0.5)
+        XCTAssertEqual(AIModel.price("claude-opus-5-5").output, 20.0)
+    }
 }

@@ -64,12 +64,16 @@ enum Spend {
 
 /// モデルと値段（1M トークンあたりのドル）
 enum AIModel {
-    static let main = "claude-opus-5-5"
+    /// ふだんのモデル（2026-11-24 本人が「バランスで」→ Opus から Sonnet に）
+    static let main = "claude-sonnet-5-5"
     /// かんたんな写真だけに使う（便12。本人が 2026-11-23 に「全部作って」で認めた）
     static let light = "claude-haiku-5-5"
 
+    /// 答えたモデルの名前で値段を引く（断られて別のモデルに回ったときも正しく数える）
     static func price(_ model: String) -> (input: Double, output: Double) {
-        model == light ? (0.10, 0.50) : (4.0, 20.0)
+        if model.contains("haiku") { return (0.10, 0.50) }
+        if model.contains("sonnet") { return (2.0, 10.0) }
+        return (4.0, 20.0)
     }
 }
 
@@ -214,8 +218,6 @@ enum ClaudeLink {
 /// 写真と候補を Claude に見せて、お店と料理を決めてもらう
 enum ClaudeVision {
     static let model = AIModel.main
-    /// 1M トークンあたりの値段（ドル）。入力 $4・出力 $20
-    static let inputPrice = 4.0, outputPrice = 20.0
 
     static var isReady: Bool { ClaudeLink.isReady }
 

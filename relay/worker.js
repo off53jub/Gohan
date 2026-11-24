@@ -5,6 +5,7 @@
 const PRICES = {
   // 1M トークンあたりのドル（入力・出力）
   "claude-opus-5-5": [4, 20],
+  "claude-sonnet-5-5": [2, 10],
   "claude-haiku-5-5": [0.1, 0.5],
 };
 
