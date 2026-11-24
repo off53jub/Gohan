@@ -39,7 +39,7 @@ targets:
         NSPhotoLibraryUsageDescription: ごはんの写真を見つけて、撮った場所と時刻から、どのお店で何を食べたかを記録します。
         NSCameraUsageDescription: AI の鍵を受け取るときに、QR コードを読みます。
         NSLocationWhenInUseUsageDescription: いまいる所から近い「また行きたいお店」を選んだり、おうち・職場の場所を覚えたりします。
-        NSLocationAlwaysAndWhenInUseUsageDescription: また行きたいお店の近くに来たときに、お知らせします（設定でオンにしたときだけ）。
+        NSLocationAlwaysAndWhenInUseUsageDescription: お店で過ごした場所と時間を、写真のお店を当てるのに使います（記録はこの iPhone の中だけ）。また行きたいお店の近くに来たときのお知らせにも使います。
         NSCalendarsFullAccessUsageDescription: 予定の名前と場所を、お店を当てる手がかりにします（設定でオンにしたときだけ）。
         NSFaceIDUsageDescription: ごはん帖を Face ID で開きます（設定でオンにしたときだけ）。
         # 夜などに、アプリを開いていなくても新しい写真を読む（いつ動くかは iOS が決める）

@@ -64,10 +64,12 @@ enum Spend {
 
 /// モデルと値段（1M トークンあたりのドル）
 enum AIModel {
+    /// 試験（作る人のメニュー）のあいだだけ、使うモデルを1つに決める
+    static var forced: String?
     /// ふだんのモデル（2026-11-24 本人が「バランスで」→ Opus から Sonnet に）
-    static let main = "claude-sonnet-5-5"
+    static var main: String { forced ?? "claude-sonnet-5-5" }
     /// かんたんな写真だけに使う（便12。本人が 2026-11-23 に「全部作って」で認めた）
-    static let light = "claude-haiku-5-5"
+    static var light: String { forced ?? "claude-haiku-5-5" }
 
     /// 答えたモデルの名前で値段を引く（断られて別のモデルに回ったときも正しく数える）
     static func price(_ model: String) -> (input: Double, output: Double) {
@@ -217,8 +219,6 @@ enum ClaudeLink {
 
 /// 写真と候補を Claude に見せて、お店と料理を決めてもらう
 enum ClaudeVision {
-    static let model = AIModel.main
-
     static var isReady: Bool { ClaudeLink.isReady }
 
     static let system = """
@@ -272,13 +272,17 @@ enum ClaudeVision {
 
     /// 写真の説明と候補の一覧（AI に渡す文）
     static func prompt(date: Date, area: String, candidates: [PlaceCandidate], lines: [String], foodCount: Int, clueCount: Int,
-                       event: String? = nil, receipt: [String] = [], knownPlace: String? = nil, indoor: Bool = false) -> String {
+                       event: String? = nil, receipt: [String] = [], knownPlace: String? = nil, indoor: Bool = false,
+                       stay: Int? = nil) -> String {
         let f = DateFormatter()
         f.locale = Locale(identifier: "ja_JP")
         f.dateFormat = "yyyy年M月d日(E) H:mm"
         var text = "撮った日時: \(f.string(from: date))\n"
         if !area.isEmpty { text += "だいたいの場所: \(area)\n" }
         if let event, !event.isEmpty { text += "その時間の予定表: \(event)\n" }
+        if let stay {
+            text += "その場所にいた時間: 約\(stay)分（iPhone の訪問の記録）。10分より短ければ、持ち帰り・立ち寄りかもしれません。\n"
+        }
         if indoor { text += "写真の位置はずれているかもしれません（ビルの中・地下など）。距離より、料理の種類と写真の文字を重く見てください。\n" }
         text += "写真: はじめの \(foodCount) 枚は料理、そのあとの \(clueCount) 枚は前後に撮った看板・メニューなど（無いこともある）\n\n"
         if let knownPlace {
@@ -290,7 +294,8 @@ enum ClaudeVision {
             for (i, c) in candidates.enumerated() {
                 let kind = Genre.from(category: c.category).map { "・\($0)" } ?? ""
                 let visited = c.visited ? "・前にも行ったお店" : ""
-                text += "\(i). \(c.name)（\(Int(c.distance.rounded()))m\(kind)\(visited)）\(c.address)\n"
+                let closed = c.closedThen ? "・その時刻は営業時間外のはず" : ""
+                text += "\(i). \(c.name)（\(Int(c.distance.rounded()))m\(kind)\(visited)\(closed)）\(c.address)\n"
             }
         }
         if !receipt.isEmpty {

@@ -133,6 +133,10 @@ enum PlaceFinder {
                     old.visited = old.visited || c.visited
                     if old.address.isEmpty { old.address = c.address }
                     if old.category.isEmpty { old.category = c.category }
+                    if old.phone.isEmpty { old.phone = c.phone }
+                    if old.url.isEmpty { old.url = c.url }
+                    if old.hours.isEmpty { old.hours = c.hours; old.closedDays = c.closedDays }
+                    if old.photo.isEmpty { old.photo = c.photo }
                     seen[k] = old
                 } else {
                     seen[k] = c

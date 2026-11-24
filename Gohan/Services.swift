@@ -95,7 +95,8 @@ enum Corrections {
     }
 
     static func lookup(latitude: Double, longitude: Double) -> (right: Set<String>, wrong: Set<String>) {
-        guard let entry = all[Matcher.spotKey(latitude: latitude, longitude: longitude)] else { return ([], []) }
+        // 試験のあいだは、本人が直した覚えを使わない（答えを見ながら解かないように）
+        guard !EvalMode.on, let entry = all[Matcher.spotKey(latitude: latitude, longitude: longitude)] else { return ([], []) }
         return (Set(entry.right), Set(entry.wrong))
     }
 }
@@ -184,6 +185,21 @@ final class LocationWatch: NSObject, CLLocationManagerDelegate {
     func start() {
         manager.delegate = self
         manager.desiredAccuracy = kCLLocationAccuracyHundredMeters
+        startVisits()
+    }
+
+    /// iPhone の「訪問」の記録を受け取り始める（「常に」の許可があるときだけ。電池はほとんど使わない。精度1）
+    func startVisits() {
+        guard status == .authorizedAlways else { return }
+        manager.startMonitoringVisits()
+    }
+
+    /// 1回だけ、「常に」の許可を聞く（訪問の記録に要る。断られたら二度と聞かない）
+    func askAlwaysOnce() {
+        guard !UserDefaults.standard.bool(forKey: "visits.asked"),
+              status == .authorizedWhenInUse || status == .notDetermined else { return }
+        UserDefaults.standard.set(true, forKey: "visits.asked")
+        manager.requestAlwaysAuthorization()
     }
 
     var status: CLAuthorizationStatus { manager.authorizationStatus }
@@ -243,8 +259,17 @@ final class LocationWatch: NSObject, CLLocationManagerDelegate {
         Task { @MainActor in self.finish(nil) }
     }
 
+    nonisolated func locationManager(_ manager: CLLocationManager, didVisit visit: CLVisit) {
+        let item = Visit(arrival: visit.arrivalDate == Date.distantPast ? nil : visit.arrivalDate,
+                         departure: visit.departureDate == Date.distantFuture ? nil : visit.departureDate,
+                         latitude: visit.coordinate.latitude, longitude: visit.coordinate.longitude,
+                         accuracy: visit.horizontalAccuracy)
+        Task { @MainActor in VisitLog.save(VisitLog.add(item, to: VisitLog.load())) }
+    }
+
     nonisolated func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
         Task { @MainActor in
+            self.startVisits()
             let list = self.authWaiting
             self.authWaiting = []
             for c in list { c.resume() }

@@ -79,6 +79,8 @@ struct RootView: View {
         .onChange(of: phase) { _, new in
             if new == .active {
                 PhotoWatch.shared.start()
+                // お店で過ごした場所と時間を記録する許可を、1回だけ聞く（精度1）
+                if onboarded { LocationWatch.shared.askAlwaysOnce() }
                 if onboarded, ScanSettings.auto { Task { await scanner.scan() } }
                 _ = Backup.remapMissing(context: context)
             }

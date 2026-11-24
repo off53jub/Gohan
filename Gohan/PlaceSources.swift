@@ -50,7 +50,8 @@ extension PlaceFinder {
 
 /// Google のお店の情報（Places API (New)）
 enum GooglePlaces {
-    static let fields = "places.displayName,places.formattedAddress,places.location,places.primaryType,places.nationalPhoneNumber"
+    // 電話番号でもう上の料金の段なので、営業時間と写真を足しても段は変わらない（写真そのものを取るときは別料金）
+    static let fields = "places.displayName,places.formattedAddress,places.location,places.primaryType,places.nationalPhoneNumber,places.regularOpeningHours,places.photos"
 
     static func nearby(latitude: Double, longitude: Double, radius: Double) async -> [PlaceCandidate] {
         let body: [String: Any] = [
@@ -101,9 +102,14 @@ enum GooglePlaces {
                   let lat = (loc["latitude"] as? NSNumber)?.doubleValue, let lon = (loc["longitude"] as? NSNumber)?.doubleValue else { return nil }
             var address = p["formattedAddress"] as? String ?? ""
             if address.hasPrefix("日本、") { address = String(address.dropFirst(3)) }
-            return PlaceCandidate(name: name, address: address, category: "google:" + (p["primaryType"] as? String ?? ""),
-                                  latitude: lat, longitude: lon, distance: Matcher.distance(latitude, longitude, lat, lon),
-                                  phone: p["nationalPhoneNumber"] as? String ?? "")
+            var c = PlaceCandidate(name: name, address: address, category: "google:" + (p["primaryType"] as? String ?? ""),
+                                   latitude: lat, longitude: lon, distance: Matcher.distance(latitude, longitude, lat, lon),
+                                   phone: p["nationalPhoneNumber"] as? String ?? "")
+            if let periods = (p["regularOpeningHours"] as? [String: Any])?["periods"] as? [[String: Any]] {
+                c.hours = OpenHours.googleText(periods)
+            }
+            if let photos = p["photos"] as? [[String: Any]], let ref = photos.first?["name"] as? String { c.photo = ref }
+            return c
         }
     }
 }
@@ -139,8 +145,15 @@ enum HotPepper {
         return shops.compactMap { s in
             guard let name = s["name"] as? String, let lat = number(s["lat"]), let lon = number(s["lng"]) else { return nil }
             let genre = (s["genre"] as? [String: Any])?["name"] as? String ?? ""
-            return PlaceCandidate(name: name, address: s["address"] as? String ?? "", category: genre.isEmpty ? "" : "genre:" + genre,
-                                  latitude: lat, longitude: lon, distance: Matcher.distance(latitude, longitude, lat, lon))
+            var c = PlaceCandidate(name: name, address: s["address"] as? String ?? "", category: genre.isEmpty ? "" : "genre:" + genre,
+                                   latitude: lat, longitude: lon, distance: Matcher.distance(latitude, longitude, lat, lon))
+            c.hours = s["open"] as? String ?? ""
+            c.closedDays = s["close"] as? String ?? ""
+            let photo = s["photo"] as? [String: Any]
+            let pc = (photo?["pc"] as? [String: Any])?["l"] as? String
+            let mobile = (photo?["mobile"] as? [String: Any])?["l"] as? String
+            c.photo = pc ?? mobile ?? ""
+            return c
         }
     }
 }
