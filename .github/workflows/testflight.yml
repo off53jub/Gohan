@@ -1,8 +1,8 @@
 name: TestFlight
 
 # main に push するか、Actions 画面から手動で実行するとビルドする（LifeLog の testflight.yml を元にした。2026-11-21）。
-# 毎回、署名なしの IPA を成果物に残す。Apple Developer Program の Secrets が揃っていて、
-# App Store Connect にアプリ（com.off53jub.gohan）が作ってあれば、TestFlight にも上げる。
+# Apple Developer Program の Secrets が揃っていて、App Store Connect にアプリ（com.off53jub.gohan）が作ってあれば、TestFlight に上げる。
+# リポジトリは公開なので、アプリのファイル（IPA）は成果物にもリリースにも置かない（鍵が入っているため。2026-11-24）。
 on:
   push:
     branches: [main]
@@ -52,7 +52,7 @@ jobs:
     runs-on: macos-26
     timeout-minutes: 80
     permissions:
-      contents: write
+      contents: read
     env:
       HAS_ASC: ${{ secrets.ASC_KEY_ID != '' }}
     steps:
@@ -108,6 +108,8 @@ jobs:
           # お店の候補の取り元の鍵（あれば。アプリに入れて、端末で入れなくて済むようにする。2026-11-24）
           HOTPEPPER_KEY: ${{ secrets.HOTPEPPER_KEY }}
           GOOGLE_PLACES_KEY: ${{ secrets.GOOGLE_PLACES_KEY }}
+          # Claude の鍵（あれば。ういちゃんが iPhone で入れなくて済むように。2026-11-24 本人「公開をやめて組み込む」）
+          CLAUDE_KEY: ${{ secrets.CLAUDE_API_KEY }}
         run: |
           set +e
           archive() {
@@ -118,7 +120,7 @@ jobs:
               -archivePath "$RUNNER_TEMP/Gohan.xcarchive" \
               DEVELOPMENT_TEAM="$TEAM_ID" \
               CURRENT_PROJECT_VERSION="${{ github.run_number }}" \
-              HOTPEPPER_KEY="$HOTPEPPER_KEY" GOOGLE_PLACES_KEY="$GOOGLE_PLACES_KEY" \
+              HOTPEPPER_KEY="$HOTPEPPER_KEY" GOOGLE_PLACES_KEY="$GOOGLE_PLACES_KEY" CLAUDE_KEY="$CLAUDE_KEY" \
               "$@" 2>&1 | tee -a "$RUNNER_TEMP/build.log"
             return ${PIPESTATUS[0]}
           }
@@ -152,28 +154,6 @@ jobs:
             grep -E "error:" "$RUNNER_TEMP/build.log" | sort -u | head -40 | while IFS= read -r line; do echo "::error::${line}"; done
           fi
           exit $status
-
-      - name: 署名なしの IPA を作る
-        run: |
-          mkdir -p "$RUNNER_TEMP/ipa/Payload"
-          cp -R "$RUNNER_TEMP/Gohan.xcarchive/Products/Applications/Gohan.app" "$RUNNER_TEMP/ipa/Payload/"
-          (cd "$RUNNER_TEMP/ipa" && zip -qry Gohan-unsigned.ipa Payload)
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: Gohan-unsigned-ipa
-          path: ${{ runner.temp }}/ipa/Gohan-unsigned.ipa
-          retention-days: 30
-
-      - name: リリースに残す
-        if: (github.event_name == 'push' || github.event_name == 'schedule') && github.ref == 'refs/heads/main'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          tag="v$(TZ=Asia/Tokyo date +%Y.%m.%d)-${{ github.run_number }}"
-          gh release create "$tag" "$RUNNER_TEMP/ipa/Gohan-unsigned.ipa" \
-            --repo "${{ github.repository }}" --target "${{ github.sha }}" --title "$tag" --generate-notes
-          echo "::notice::リリース $tag に IPA を残しました"
 
       - name: 署名して TestFlight にアップロード
         if: env.HAS_ASC == 'true' && env.ASC_UNUSABLE != 'true'
