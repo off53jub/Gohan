@@ -2,7 +2,7 @@
 
 pCloud や Google フォトにある昔のご飯の写真を、ごはん帖に入れるための道具です。
 ご飯かどうか・料理の名前・看板の店名は **Claude Code の会話の中で** 見ます。アプリの Claude API は使いません。
-お店は、取り込んだあとアプリが地図とホットペッパー（無料）で探します。
+お店は、PC で食事の場所の近くのお店（OpenStreetMap・無料）と写真から選び、アプリが地図とホットペッパーで名前を確かめます。
 
 写真の写しは作業フォルダ（既定 `D:\GohanImport`）にだけ置きます。**公開リポジトリの中には置かない**でください（道具が止めます）。
 
@@ -14,7 +14,8 @@ uv run gohan_import.py scan --source "P:\Automatic Upload" --since 2026-09-01
 uv run gohan_import.py sheets
 # ここで Claude に D:\GohanImport\sheets\*.jpg を見てもらい、screen.json を書いてもらう
 uv run gohan_import.py group
-# ここで Claude に D:\GohanImport\meals\*.jpg を見てもらい、verdicts.json を書いてもらう
+uv run gohan_import.py nearby   # Overpass が混んでいて取れなかった分は、もう一度流すとそこだけやり直す
+# ここで Claude に D:\GohanImport\meals\*.jpg と meals.json を見てもらい、verdicts.json を書いてもらう
 uv run gohan_import.py pack --label pCloud
 ```
 
@@ -51,3 +52,5 @@ uv run gohan_import.py pack --label pCloud
 - `genre` は `Genre.all` の一覧から 1 つ（ラーメン・つけ麺・そば・うどん・寿司・和食・定食・丼・焼肉・焼き鳥・居酒屋・中華・韓国料理・カレー・エスニック・イタリアン・フレンチ・洋食・ハンバーガー・ファストフード・カフェ・スイーツ・パン・バー・鍋・お好み焼き・その他）。
 - `name_seen` は写真から**読めた**店名だけ（推測では書かない）。`lines` は看板・メニュー・レシートから読めた文字（店名・料理名など、10 行まで）。
 - 家の食卓・手料理・コンビニの持ち帰りらしければ `eaten_out` を false に。食事でなければ `is_meal` を false に。
+- お店: `place_name`（meals.json の candidates から選ぶときは名前をそのまま）・`place_confidence`（0〜1）・`place_reason`。決め手が無ければ `place_name` を空に。
+- 頼み方の全文は `tools/photo-import/JUDGE.md`（そのまま Claude に読ませる。担当の範囲と書き出し先だけ伝える）。
