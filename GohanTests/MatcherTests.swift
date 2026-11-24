@@ -121,7 +121,7 @@ final class ClaudeParseTests: XCTestCase {
         let (verdict, usd) = try ClaudeVision.parse(Data(json.utf8))
         XCTAssertEqual(verdict.place_index, 2)
         XCTAssertEqual(verdict.dishes, ["味玉醤油ラーメン"])
-        XCTAssertEqual(usd, 4, accuracy: 0.001)
+        XCTAssertEqual(usd, 2, accuracy: 0.001)   // ふだんのモデル（Sonnet）の入力 100万トークン = $2
     }
 
     func testRefusalThrows() {
