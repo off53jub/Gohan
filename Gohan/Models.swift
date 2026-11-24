@@ -205,6 +205,13 @@ struct PlaceCandidate: Codable, Hashable, Identifiable {
     var url: String = ""
     /// 写真の文字と店名の合い方（0〜1。理由の1行に使う）
     var textHit: Double = 0
+    /// 営業時間（ホットペッパーの文、または Google の短い形「G|…」）と定休日（精度2）
+    var hours: String = ""
+    var closedDays: String = ""
+    /// お店の紹介写真（ホットペッパーの画像の URL、または Google の写真の名前「places/…」。精度4）
+    var photo: String = ""
+    /// 写真を撮った時刻に閉まっていたはず（その場で付ける印）
+    var closedThen: Bool = false
 
     var id: String { key }
     var key: String { Self.key(name: name, latitude: latitude, longitude: longitude) }
@@ -237,6 +244,10 @@ struct PlaceCandidate: Codable, Hashable, Identifiable {
         phone = try c.decodeIfPresent(String.self, forKey: .phone) ?? ""
         url = try c.decodeIfPresent(String.self, forKey: .url) ?? ""
         textHit = try c.decodeIfPresent(Double.self, forKey: .textHit) ?? 0
+        hours = try c.decodeIfPresent(String.self, forKey: .hours) ?? ""
+        closedDays = try c.decodeIfPresent(String.self, forKey: .closedDays) ?? ""
+        photo = try c.decodeIfPresent(String.self, forKey: .photo) ?? ""
+        closedThen = try c.decodeIfPresent(Bool.self, forKey: .closedThen) ?? false
     }
 
     static func key(name: String, latitude: Double, longitude: Double) -> String {

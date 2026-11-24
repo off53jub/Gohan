@@ -148,7 +148,7 @@ enum GenreLearn {
     }
 
     static func lookup(_ label: String) -> String? {
-        guard let counts = all[label], let best = counts.max(by: { $0.value < $1.value }), best.value >= 2 else { return nil }
+        guard !EvalMode.on, let counts = all[label], let best = counts.max(by: { $0.value < $1.value }), best.value >= 2 else { return nil }
         return best.key
     }
 }

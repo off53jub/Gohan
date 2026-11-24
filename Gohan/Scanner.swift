@@ -229,9 +229,18 @@ final class Scanner {
     }
 
     /// 1回の食事を作る。作ったら返す（食事でないと分かったときは、消した扱いで残して nil）
-    private func buildMeal(_ group: [SeenPhoto], all: [SeenPhoto], context: ModelContext, old: Bool) async -> Meal? {
+    func buildMeal(_ group: [SeenPhoto], all: [SeenPhoto], context: ModelContext, old: Bool) async -> Meal? {
         guard let first = group.first, let last = group.last else { return nil }
-        let spot = Matcher.center(of: group)
+        var spot = Matcher.center(of: group)
+        // 1. iPhone の訪問の記録（どこに何分いたか）。写真に位置が無い・ビルの中で位置があいまいなときは、こちらの位置を使う
+        let photoAccuracy = group.compactMap(\.accuracy).filter { $0 > 0 }.min()
+        let visit = VisitLog.match(VisitLog.load(), from: first.date, to: last.date)
+        var usedVisit = false
+        if let visit, Matcher.useVisit(visit, spot: spot, accuracy: photoAccuracy) {
+            spot = (latitude: visit.latitude, longitude: visit.longitude)
+            usedVisit = true
+        }
+        let stay = visit?.minutes.flatMap { $0 > 0 && $0 < 600 ? $0 : nil }
         let meal = Meal(date: first.date, endDate: last.date, photoIDs: group.map(\.id),
                         latitude: spot?.latitude, longitude: spot?.longitude)
         let label = group.max { $0.food < $1.food }?.label ?? ""
@@ -274,7 +283,8 @@ final class Scanner {
 
         // お店の候補（近くの飲食店・写真の文字で探したお店・予定の場所・前に行ったお店）
         // 位置があいまい（ビルの中・地下・位置を借りた写真）なら、広く探して候補も多めにする（5）
-        let accuracy = group.compactMap(\.accuracy).filter { $0 > 0 }.min() ?? 50
+        var accuracy = photoAccuracy ?? 50
+        if usedVisit, let visit { accuracy = visit.accuracy }
         let indoor = accuracy > 65
         var candidates: [PlaceCandidate] = []
         if let spot, meal.spot.isEmpty {
@@ -289,7 +299,9 @@ final class Scanner {
             candidates = PlaceFinder.merge(lists)
         }
         var ranked = Matcher.rank(candidates, lines: lines + receipt, dishLabel: label)
-        ranked = Array(Matcher.applyGenre(ranked, photoGenre: photoGuess?.genre).prefix(indoor ? 20 : 12))
+        // 2. 撮った時刻に閉まっていたはずのお店は下げる
+        ranked = Matcher.applyHours(Matcher.applyGenre(ranked, photoGenre: photoGuess?.genre), at: first.date)
+        ranked = Array(ranked.prefix(indoor ? 20 : 12))
         if let spot {
             let learned = Corrections.lookup(latitude: spot.latitude, longitude: spot.longitude)
             ranked = Matcher.applyCorrections(ranked, right: learned.right, wrong: learned.wrong)
@@ -304,7 +316,7 @@ final class Scanner {
             let light = AISettings.lightForEasy && (known != nil || !meal.spot.isEmpty || Matcher.isEasy(ranked))
             let prompt = ClaudeVision.prompt(date: first.date, area: meal.area, candidates: known.map { [$0] } ?? ranked, lines: lines,
                                              foodCount: foodJPEGs.count, clueCount: clueJPEGs.count, event: event, receipt: receipt,
-                                             knownPlace: known.map { "\($0.name)（\($0.address)）" }, indoor: indoor)
+                                             knownPlace: known.map { "\($0.name)（\($0.address)）" }, indoor: indoor, stay: stay)
             if old, AISettings.batchOld, known == nil, meal.spot.isEmpty {
                 // 古い写真は急がないので、まとめ処理で半額に（便13）。答えが来るまでは端末で決めておく
                 BatchQueue.enqueue(mealID: meal.id, body: ClaudeVision.body(food: foodJPEGs, clues: Array(clueJPEGs), prompt: prompt, light: false))
@@ -348,7 +360,8 @@ final class Scanner {
                 let fresh = PlaceFinder.merge([extra]).filter { !already.contains(Matcher.normalize($0.name)) }
                 if !fresh.isEmpty {
                     var merged = Matcher.rank(PlaceFinder.merge([ranked, fresh]), lines: lines + receipt, dishLabel: label)
-                    merged = Array(Matcher.applyGenre(merged, photoGenre: photoGuess?.genre).prefix(indoor ? 20 : 12))
+                    merged = Matcher.applyHours(Matcher.applyGenre(merged, photoGenre: photoGuess?.genre), at: first.date)
+                    merged = Array(merged.prefix(indoor ? 20 : 12))
                     let learned = Corrections.lookup(latitude: spot.latitude, longitude: spot.longitude)
                     merged = Matcher.applyCorrections(merged, right: learned.right, wrong: learned.wrong)
                     meal.candidates = merged
@@ -359,7 +372,7 @@ final class Scanner {
                         // 増えた候補で、AI にもう一度選んでもらう
                         let again = ClaudeVision.prompt(date: first.date, area: meal.area, candidates: merged, lines: lines,
                                                         foodCount: foodJPEGs.count, clueCount: clueJPEGs.count, event: event,
-                                                        receipt: receipt, indoor: indoor)
+                                                        receipt: receipt, indoor: indoor, stay: stay)
                         if let second = try? await ClaudeVision.judge(food: foodJPEGs, clues: Array(clueJPEGs), prompt: again),
                            second.place_index >= 0, second.place_index < merged.count, second.place_confidence > meal.confidence {
                             setPlace(merged[second.place_index], on: meal, confidence: second.place_confidence,
@@ -372,6 +385,20 @@ final class Scanner {
                         }
                     }
                     meal.source += "+google"
+                }
+            }
+            // 4. まだ迷っていれば、候補のお店の紹介写真と見比べてもらう（写真のある候補だけ・新しい写真だけ）
+            if meal.confidence < 0.6, !old, ClaudeLink.isReady, Spend.canSpend, !foodJPEGs.isEmpty {
+                let shops = LookAlike.pickable(meal.candidates)
+                if !shops.isEmpty {
+                    status = "お店の写真と見比べています"
+                    if let found = try? await LookAlike.ask(food: foodJPEGs, shops: shops),
+                       found.answer.confidence >= 0.6, found.answer.confidence > meal.confidence {
+                        let why = found.answer.reason.isEmpty ? "" : "（\(found.answer.reason)）"
+                        setPlace(found.shop, on: meal, confidence: min(0.8, found.answer.confidence),
+                                 reason: "お店の写真と見比べました" + why, context: context)
+                        meal.source += "+look"
+                    }
                 }
             }
             // 3. まだ迷っていれば、AI にネットで確かめてもらう（新しい写真だけ・設定でオフにできる）

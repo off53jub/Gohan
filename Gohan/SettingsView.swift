@@ -365,6 +365,15 @@ struct AdvancedSettingsView: View {
                 Text("Apple のマップに載っていないお店も候補に入ります。鍵は自分で取って、この iPhone にだけ置きます。写真の位置（だいたいの場所）がそれぞれの会社に送られます。今月の呼び出し: Google \(Metrics.value("googleCalls")) 回・ホットペッパー \(Metrics.value("hotpepperCalls")) 回・ネットで確かめた \(Metrics.value("webChecks")) 回")
             }
             Section {
+                NavigationLink("試験（当たり方を比べる）") { EvalView() }
+                LabeledContent("訪問の記録", value: LocationWatch.shared.status == .authorizedAlways ? "\(VisitLog.load().count) 件" : "許可なし（「常に」が要る）")
+                LabeledContent("今月 お店の写真と見比べた", value: "\(Metrics.value("lookAlikes")) 回")
+            } header: {
+                Text("精度")
+            } footer: {
+                Text("訪問の記録（どこに何分いたか）はこの iPhone の中だけに置き、AI には「何分いたか」だけを伝えます。お店の写真と見比べるのは、迷ったときだけです。")
+            }
+            Section {
                 let s = AccuracyLog.summary(AccuracyLog.load())
                 LabeledContent("合ってた", value: "\(s.hits)")
                 LabeledContent("お店を直した（候補に入っていた）", value: "\(s.fixedInList)")
@@ -683,6 +692,8 @@ struct PrivacyView: View {
                 Text("・撮った日時、だいたいの地名、お店の候補の名前と距離、写真から読めた文字、予定の名前（予定表を使うときだけ）")
                 Text("・人の顔は、送る前に塗りつぶします（設定で変えられます）")
                 Text("・お店に迷ったときだけ、街の名前・写真から読めた文字・料理のジャンルを送って、AI にネットで探してもらいます（設定で止められます）")
+                Text("・お店に迷ったときだけ、候補のお店の紹介写真（ホットペッパー・Google）と料理の写真を見比べてもらいます")
+                Text("・お店にいた時間（iPhone の訪問の記録から。場所の記録そのものはこの iPhone の中だけ）")
             }
             Section("鍵を入れたときだけ送るもの") {
                 Text("・Google・ホットペッパーに、写真のだいたいの場所と、探すお店の名前")
