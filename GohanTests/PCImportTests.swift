@@ -27,6 +27,17 @@ final class PCImportTests: XCTestCase {
         XCTAssertEqual(meal.endDate.timeIntervalSince(meal.date), 33 * 60 + 16)
     }
 
+    func testPlaceFromPCIsOptional() throws {
+        XCTAssertNil(try PCImport.decode(Data(sample.utf8)).meals[0].place)
+        let withPlace = sample.replacingOccurrences(
+            of: #""lines":["炭火焼肉"],"#,
+            with: #""lines":["炭火焼肉"],"place":{"name":"炭火焼肉 たん","latitude":35.6976,"longitude":139.6690,"confidence":0.8,"reason":"看板と場所が合った"},"#)
+        let place = try XCTUnwrap(PCImport.decode(Data(withPlace.utf8)).meals[0].place)
+        XCTAssertEqual(place.name, "炭火焼肉 たん")
+        XCTAssertEqual(place.confidence, 0.8)
+        XCTAssertEqual(place.latitude, 35.6976)
+    }
+
     func testRejectsOtherFiles() {
         let backup = #"{"kind":"something","meals":[]}"#
         XCTAssertThrowsError(try PCImport.decode(Data(backup.utf8)))

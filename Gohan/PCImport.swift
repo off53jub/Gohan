@@ -30,6 +30,16 @@ struct ImportMeal: Codable, Equatable {
     /// 看板・メニュー・レシートから読めた文字（お店の候補の点数に使う）
     var lines: [String] = []
     var photos: [ImportPhoto]
+    /// PC の Claude が、場所の近くのお店（OpenStreetMap）と写真から選んだお店（無ければ nil）
+    var place: ImportPlace? = nil
+}
+
+struct ImportPlace: Codable, Equatable {
+    var name: String
+    var latitude: Double?
+    var longitude: Double?
+    var confidence: Double
+    var reason: String
 }
 
 struct ImportPhoto: Codable, Equatable {
@@ -157,7 +167,8 @@ extension Scanner {
                 if !ImportedPhotos.isFile(id) { seen[id] = seenPhoto }
             }
             guard !group.isEmpty else { continue }
-            if let meal = await buildMeal(group, all: [], context: context, old: true, preset: item.verdict, presetLines: item.lines) {
+            if let meal = await buildMeal(group, all: [], context: context, old: true, preset: item.verdict, presetLines: item.lines,
+                                          presetPlace: item.place) {
                 meal.endDate = max(meal.endDate, item.endDate)
                 existing.append((date: meal.date, latitude: meal.latitude, longitude: meal.longitude))
                 result.added += 1

@@ -234,7 +234,7 @@ final class Scanner {
     /// 1回の食事を作る。作ったら返す（食事でないと分かったときは、消した扱いで残して nil）
     /// preset は PC で決めてきた答え（あればこのアプリの AI・Google は呼ばない。PC から取り込む）
     func buildMeal(_ group: [SeenPhoto], all: [SeenPhoto], context: ModelContext, old: Bool,
-                   preset: MealVerdict? = nil, presetLines: [String] = []) async -> Meal? {
+                   preset: MealVerdict? = nil, presetLines: [String] = [], presetPlace: ImportPlace? = nil) async -> Meal? {
         guard let first = group.first, let last = group.last else { return nil }
         var spot = Matcher.center(of: group)
         // 1. iPhone の訪問の記録（どこに何分いたか）。写真に位置が無い・ビルの中で位置があいまいなときは、こちらの位置を使う
@@ -319,16 +319,26 @@ final class Scanner {
         let known = meal.spot.isEmpty ? Matcher.knownPlace(ranked) : nil
         var verdict: MealVerdict?
         if var preset {
-            // PC で決めてきた料理・ジャンル。お店は端末の点数で選ぶ（看板の店名はあとで探し直す）
-            let (pick, confidence) = Matcher.decideOnDevice(ranked)
-            if let pick, pick.score >= 0.25, let index = ranked.firstIndex(of: pick) {
+            // PC で決めてきた料理・ジャンル。お店は PC の答えが候補にあればそれ、無ければ端末の点数で選ぶ
+            var (pick, confidence) = Matcher.decideOnDevice(ranked)
+            confidence = min(0.65, confidence)
+            if pick.map({ $0.score < 0.25 }) ?? true { pick = nil }
+            preset.reason = ""
+            if let wanted = presetPlace, wanted.confidence >= 0.4, !wanted.name.isEmpty {
+                let core = Matcher.coreName(wanted.name)
+                if let named = ranked.first(where: { Matcher.similarity(Matcher.coreName($0.name), core) >= 0.6 }) {
+                    pick = named
+                    confidence = min(0.9, max(confidence, wanted.confidence))
+                    preset.reason = wanted.reason
+                }
+            }
+            if let pick, let index = ranked.firstIndex(of: pick) {
                 preset.place_index = index
-                preset.place_confidence = min(0.65, confidence)
+                preset.place_confidence = confidence
             } else {
                 preset.place_index = -1
                 preset.place_confidence = 0
-            }
-            preset.reason = ""
+            }""
             verdict = preset
             meal.source = "pc"
         } else if ready {
@@ -366,6 +376,21 @@ final class Scanner {
                let found = await research(name: seen, current: meal.place, latitude: spot.latitude, longitude: spot.longitude) {
                 setPlace(found, on: meal, confidence: 0.75, reason: "写真の店名「\(seen)」で探し直しました", context: context)
                 meal.source += "+name"
+            }
+            // PC で選んできたお店が、まだ決まったお店と違うとき（候補に無かった）。名前で探し、無ければ OpenStreetMap の場所のまま置く
+            if let wanted = presetPlace, wanted.confidence >= 0.4, !wanted.name.isEmpty,
+               Matcher.similarity(Matcher.coreName(meal.place?.name ?? ""), Matcher.coreName(wanted.name)) < 0.6 {
+                let lat = wanted.latitude ?? spot.latitude
+                let lon = wanted.longitude ?? spot.longitude
+                let why = wanted.reason.isEmpty ? "PC で場所と写真から選びました" : wanted.reason
+                if let found = await research(name: wanted.name, current: meal.place, latitude: lat, longitude: lon, radius: 500) {
+                    setPlace(found, on: meal, confidence: min(0.85, wanted.confidence), reason: why, context: context)
+                } else if let la = wanted.latitude, let lo = wanted.longitude {
+                    let osm = PlaceCandidate(name: wanted.name, address: meal.area, category: "osm", latitude: la, longitude: lo,
+                                             distance: Matcher.distance(spot.latitude, spot.longitude, la, lo))
+                    setPlace(osm, on: meal, confidence: min(0.8, wanted.confidence), reason: why, context: context)
+                }
+                meal.source += "+place"
             }
             // Apple・ホットペッパーで見つからない（お店が決まらない・自信が低い）ときだけ、Google でも探す（本人の希望。2026-11-24）
             if preset == nil, meal.place == nil || meal.confidence < 0.6, KeyStore.googleKey != nil, !meal.aiPending {
