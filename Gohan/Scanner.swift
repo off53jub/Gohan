@@ -49,6 +49,9 @@ final class Scanner {
     @ObservationIgnored var container: ModelContainer?
     @ObservationIgnored private var dishBook: [String: String] = [:]
 
+    /// 料理の名前のそろえ方を、いまの記録から作り直す（PC から取り込むときにも使う）
+    func refreshDishBook(_ meals: [Meal]) { dishBook = Matcher.dishBook(meals.map(\.dishes)) }
+
     /// 新しい写真を読む。作った食事の数を返す
     @discardableResult
     func scan(mode: Mode = .normal, notify: Bool = false) async -> Int {
@@ -229,7 +232,9 @@ final class Scanner {
     }
 
     /// 1回の食事を作る。作ったら返す（食事でないと分かったときは、消した扱いで残して nil）
-    func buildMeal(_ group: [SeenPhoto], all: [SeenPhoto], context: ModelContext, old: Bool) async -> Meal? {
+    /// preset は PC で決めてきた答え（あればこのアプリの AI・Google は呼ばない。PC から取り込む）
+    func buildMeal(_ group: [SeenPhoto], all: [SeenPhoto], context: ModelContext, old: Bool,
+                   preset: MealVerdict? = nil, presetLines: [String] = [], presetPlace: ImportPlace? = nil) async -> Meal? {
         guard let first = group.first, let last = group.last else { return nil }
         var spot = Matcher.center(of: group)
         // 1. iPhone の訪問の記録（どこに何分いたか）。写真に位置が無い・ビルの中で位置があいまいなときは、こちらの位置を使う
@@ -256,7 +261,7 @@ final class Scanner {
         }
 
         // 料理の写真（多ければ散らして3枚）と、前後の手がかりの写真
-        var lines: [String] = []
+        var lines: [String] = presetLines
         var foodJPEGs: [Data] = []
         for photo in Self.spread(group.sorted { $0.food > $1.food }, count: 3) {
             guard let image = await loadImage(photo, side: 1024) else { continue }
@@ -279,7 +284,8 @@ final class Scanner {
 
         // 写真のジャンル（写真の上位の名前・看板やメニューの文字・本人が直したジャンル。2026-11-24）
         let labels = Matcher.mergeLabels(group)
-        let photoGuess = Matcher.guessGenre(labels: labels, lines: lines + receipt, shopName: nil, learned: GenreLearn.lookup(label))
+        var photoGuess = Matcher.guessGenre(labels: labels, lines: lines + receipt, shopName: nil, learned: GenreLearn.lookup(label))
+        if let preset, preset.genre != "その他" { photoGuess = GenreGuess(genre: preset.genre, dish: nil, from: "pc") }
 
         // お店の候補（近くの飲食店・写真の文字で探したお店・予定の場所・前に行ったお店）
         // 位置があいまい（ビルの中・地下・位置を借りた写真）なら、広く探して候補も多めにする（5）
@@ -309,10 +315,33 @@ final class Scanner {
         meal.candidates = ranked
 
         // 決め方を選ぶ
-        let ready = ClaudeLink.isReady && Spend.canSpend && !foodJPEGs.isEmpty
+        let ready = preset == nil && ClaudeLink.isReady && Spend.canSpend && !foodJPEGs.isEmpty
         let known = meal.spot.isEmpty ? Matcher.knownPlace(ranked) : nil
         var verdict: MealVerdict?
-        if ready {
+        if var preset {
+            // PC で決めてきた料理・ジャンル。お店は PC の答えが候補にあればそれ、無ければ端末の点数で選ぶ
+            var (pick, confidence) = Matcher.decideOnDevice(ranked)
+            confidence = min(0.65, confidence)
+            if pick.map({ $0.score < 0.25 }) ?? true { pick = nil }
+            preset.reason = ""
+            if let wanted = presetPlace, wanted.confidence >= 0.4, !wanted.name.isEmpty {
+                let core = Matcher.coreName(wanted.name)
+                if let named = ranked.first(where: { Matcher.similarity(Matcher.coreName($0.name), core) >= 0.6 }) {
+                    pick = named
+                    confidence = min(0.9, max(confidence, wanted.confidence))
+                    preset.reason = wanted.reason
+                }
+            }
+            if let pick, let index = ranked.firstIndex(of: pick) {
+                preset.place_index = index
+                preset.place_confidence = confidence
+            } else {
+                preset.place_index = -1
+                preset.place_confidence = 0
+            }
+            verdict = preset
+            meal.source = "pc"
+        } else if ready {
             let light = AISettings.lightForEasy && (known != nil || !meal.spot.isEmpty || Matcher.isEasy(ranked))
             let prompt = ClaudeVision.prompt(date: first.date, area: meal.area, candidates: known.map { [$0] } ?? ranked, lines: lines,
                                              foodCount: foodJPEGs.count, clueCount: clueJPEGs.count, event: event, receipt: receipt,
@@ -348,8 +377,23 @@ final class Scanner {
                 setPlace(found, on: meal, confidence: 0.75, reason: "写真の店名「\(seen)」で探し直しました", context: context)
                 meal.source += "+name"
             }
+            // PC で選んできたお店が、まだ決まったお店と違うとき（候補に無かった）。名前で探し、無ければ OpenStreetMap の場所のまま置く
+            if let wanted = presetPlace, wanted.confidence >= 0.4, !wanted.name.isEmpty,
+               Matcher.similarity(Matcher.coreName(meal.place?.name ?? ""), Matcher.coreName(wanted.name)) < 0.6 {
+                let lat = wanted.latitude ?? spot.latitude
+                let lon = wanted.longitude ?? spot.longitude
+                let why = wanted.reason.isEmpty ? "PC で場所と写真から選びました" : wanted.reason
+                if let found = await research(name: wanted.name, current: meal.place, latitude: lat, longitude: lon, radius: 500) {
+                    setPlace(found, on: meal, confidence: min(0.85, wanted.confidence), reason: why, context: context)
+                } else if let la = wanted.latitude, let lo = wanted.longitude {
+                    let osm = PlaceCandidate(name: wanted.name, address: meal.area, category: "osm", latitude: la, longitude: lo,
+                                             distance: Matcher.distance(spot.latitude, spot.longitude, la, lo))
+                    setPlace(osm, on: meal, confidence: min(0.8, wanted.confidence), reason: why, context: context)
+                }
+                meal.source += "+place"
+            }
             // Apple・ホットペッパーで見つからない（お店が決まらない・自信が低い）ときだけ、Google でも探す（本人の希望。2026-11-24）
-            if meal.place == nil || meal.confidence < 0.6, KeyStore.googleKey != nil, !meal.aiPending {
+            if preset == nil, meal.place == nil || meal.confidence < 0.6, KeyStore.googleKey != nil, !meal.aiPending {
                 status = "Google でも探しています"
                 var extra: [PlaceCandidate] = []
                 if let seen = verdict?.name_seen, !seen.isEmpty {
@@ -520,6 +564,7 @@ final class Scanner {
     }
 
     private func loadImage(_ photo: SeenPhoto, side: CGFloat) async -> UIImage? {
+        if ImportedPhotos.isFile(photo.id) { return await ImportedPhotos.image(photo.id, side: side) }
         guard let asset = PhotoLoader.asset(photo.id) else { return nil }
         if photo.isVideo { return await PhotoLoader.videoFrame(asset, side: side) }
         return await PhotoLoader.image(asset, side: side)

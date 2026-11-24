@@ -366,6 +366,7 @@ struct AdvancedSettingsView: View {
             }
             Section {
                 NavigationLink("試験（当たり方を比べる）") { EvalView() }
+                NavigationLink("PC から取り込む（pCloud・Google フォト）") { PCImportView() }
                 LabeledContent("訪問の記録", value: LocationWatch.shared.status == .authorizedAlways ? "\(VisitLog.load().count) 件" : "許可なし（「常に」が要る）")
                 LabeledContent("今月 お店の写真と見比べた", value: "\(Metrics.value("lookAlikes")) 回")
             } header: {

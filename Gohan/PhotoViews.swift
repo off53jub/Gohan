@@ -14,6 +14,12 @@ final class ThumbCache {
         guard !id.isEmpty else { return nil }
         let key = "\(id)#\(Int(side))" as NSString
         if let hit = cache.object(forKey: key) { return hit }
+        if ImportedPhotos.isFile(id) {
+            // PC から取り込んだ写真（写真アプリに無いもの）
+            guard let image = await ImportedPhotos.image(id, side: side) else { return nil }
+            cache.setObject(image, forKey: key)
+            return image
+        }
         guard let asset = PhotoLoader.asset(id), let image = await PhotoLoader.image(asset, side: side) else { return nil }
         cache.setObject(image, forKey: key)
         return image
