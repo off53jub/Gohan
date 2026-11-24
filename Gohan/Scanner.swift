@@ -338,7 +338,7 @@ final class Scanner {
             } else {
                 preset.place_index = -1
                 preset.place_confidence = 0
-            }""
+            }
             verdict = preset
             meal.source = "pc"
         } else if ready {
