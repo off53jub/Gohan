@@ -47,7 +47,7 @@ final class Scanner {
     /// 充電・Wi-Fi を待っている古い写真の数（便6）
     var deferredOld = 0
     @ObservationIgnored var container: ModelContainer?
-    @ObservationIgnored private var dishBook: [String: String] = [:]
+    @ObservationIgnored private(set) var dishBook: [String: String] = [:]
 
     /// 料理の名前のそろえ方を、いまの記録から作り直す（PC から取り込むときにも使う）
     func refreshDishBook(_ meals: [Meal]) { dishBook = Matcher.dishBook(meals.map(\.dishes)) }
@@ -395,8 +395,8 @@ final class Scanner {
                 meal.source += "+place"
             }
             // Apple・ホットペッパーで見つからない（お店が決まらない・自信が低い）ときだけ、Google でも探す（本人の希望。2026-11-24）
-            // PC から入れた食事も、場所があってお店が決まらないときは Google で探す（本人「ほんとに Google 使ってる？」2026-11-25）
-            if meal.place == nil || meal.confidence < 0.6, KeyStore.googleKey != nil, !meal.aiPending {
+            // PC から入れた食事では呼ばない（何千食もあるので。Google は使いすぎると料金がかかる。必要なら「お店を選ぶ」で自分で探す。2026-11-25）
+            if preset == nil, meal.place == nil || meal.confidence < 0.6, KeyStore.googleKey != nil, !meal.aiPending {
                 status = "Google でも探しています"
                 var extra: [PlaceCandidate] = []
                 if let seen = verdict?.name_seen, !seen.isEmpty {

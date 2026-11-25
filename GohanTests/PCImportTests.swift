@@ -68,4 +68,25 @@ final class PCImportTests: XCTestCase {
         XCTAssertLessThanOrEqual(max(loaded?.size.width ?? 99, loaded?.size.height ?? 99), 64)
         if let url = ImportedPhotos.url(id) { try? FileManager.default.removeItem(at: url) }
     }
+
+    func testSamePhotoHasSameFingerprint() throws {
+        let data = Data("jpeg".utf8)
+        let id = try XCTUnwrap(ImportedPhotos.save(data))
+        XCTAssertEqual(ImportedPhotos.digest(of: id), ImportedPhotos.digest(data))
+        XCTAssertNotEqual(ImportedPhotos.digest(data), ImportedPhotos.digest(Data("other".utf8)))
+        if let url = ImportedPhotos.url(id) { try? FileManager.default.removeItem(at: url) }
+    }
+
+    func testMatchPicksClosestMeal() {
+        let base = Date(timeIntervalSince1970: 1_700_000_000)
+        let meal = ImportMeal(date: base, endDate: base, latitude: nil, longitude: nil, accuracy: nil,
+                              verdict: MealVerdict(is_meal: true, eaten_out: true, place_index: -1, place_confidence: 0,
+                                                   genre: "ラーメン", dishes: [], summary: "", kind: "meal", reason: "", name_seen: ""),
+                              photos: [])
+        let existing: [(date: Date, latitude: Double?, longitude: Double?)] = [
+            (base.addingTimeInterval(-40 * 60), nil, nil), (base.addingTimeInterval(5 * 60), nil, nil), (base.addingTimeInterval(3 * 3600), nil, nil),
+        ]
+        XCTAssertEqual(PCImport.matchIndex(meal, existing: existing), 1)
+        XCTAssertNil(PCImport.matchIndex(meal, existing: [existing[2]]))
+    }
 }

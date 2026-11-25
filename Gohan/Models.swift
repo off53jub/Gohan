@@ -114,6 +114,8 @@ final class Meal {
     var special: Bool = false
     /// 端末が見た料理のラベル（Vision の英語の名前）
     var visionLabel: String = ""
+    /// 本人がジャンルを直した（PC から入れ直しても上書きしない。2026-11-25）
+    var genreByHand: Bool = false
     /// 写真の iCloud での ID（機種変更のあとに写真を見つけ直すため）
     var cloudIDs: [String] = []
     /// まとめ処理の番号

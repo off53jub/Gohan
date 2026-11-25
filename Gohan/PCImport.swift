@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import Photos
 import SwiftData
@@ -93,6 +94,16 @@ enum ImportedPhotos {
     static var count: Int {
         (try? FileManager.default.contentsOfDirectory(atPath: folder.path).count) ?? 0
     }
+
+    /// 中身の指紋（同じ写真を 2 回入れないため。PC は同じ写真から毎回同じ JPEG を作る）
+    static func digest(_ data: Data) -> String {
+        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+
+    static func digest(of id: String) -> String? {
+        guard let url = url(id), let data = try? Data(contentsOf: url) else { return nil }
+        return digest(data)
+    }
 }
 
 enum PCImport {
@@ -102,6 +113,9 @@ enum PCImport {
         var notMeal = 0
         var fromLibrary = 0
         var fromFile = 0
+        /// PC から前に入れた食事に、写真を足した数・ジャンルを直した数（入れ直したとき）
+        var photosAdded = 0
+        var genresFixed = 0
     }
 
     static func decode(_ data: Data) throws -> ImportFile {
@@ -115,11 +129,18 @@ enum PCImport {
 
     /// もう記録にある食事か（前後 45 分・300m 以内。位置の分からないほうがあれば時刻だけで見る）
     static func isDuplicate(_ meal: ImportMeal, existing: [(date: Date, latitude: Double?, longitude: Double?)]) -> Bool {
-        existing.contains { e in
+        matchIndex(meal, existing: existing) != nil
+    }
+
+    /// 同じ食事の番号（いちばん時刻の近いもの）
+    static func matchIndex(_ meal: ImportMeal, existing: [(date: Date, latitude: Double?, longitude: Double?)]) -> Int? {
+        existing.indices.filter { i in
+            let e = existing[i]
             guard abs(e.date.timeIntervalSince(meal.date)) <= 45 * 60 else { return false }
             guard let a = meal.latitude, let b = meal.longitude, let c = e.latitude, let d = e.longitude else { return true }
             return Matcher.distance(a, b, c, d) <= 300
         }
+        .min { abs(existing[$0].date.timeIntervalSince(meal.date)) < abs(existing[$1].date.timeIntervalSince(meal.date)) }
     }
 
     /// 写真アプリに同じ写真（撮った時刻が 2 秒以内）があれば、その ID
@@ -140,6 +161,7 @@ extension Scanner {
         var result = PCImport.Result()
         let current = (try? context.fetch(FetchDescriptor<Meal>())) ?? []
         refreshDishBook(current)
+        var known = current
         var existing = current.map { (date: $0.date, latitude: $0.latitude, longitude: $0.longitude) }
         var seen = SeenStore.load()
         let meals = file.meals.sorted { $0.date < $1.date }
@@ -152,7 +174,19 @@ extension Scanner {
             let left = paced ? Int((Double(meals.count - i) * pace / 60).rounded(.up)) : 0
             progress("\(i + 1)/\(meals.count)" + (left > 1 ? "（あと約 \(left) 分）" : ""))
             if !item.verdict.is_meal { result.notMeal += 1; continue }
-            if PCImport.isDuplicate(item, existing: existing) { result.skipped += 1; continue }
+            if let index = PCImport.matchIndex(item, existing: existing) {
+                // もうある食事。PC から前に入れたものなら、足りない写真を足し、ジャンルを新しい答えにする（本人が直したジャンルは残す）
+                let meal = known[index]
+                if meal.source.hasPrefix("pc") {
+                    let changed = refreshFromPC(meal, with: item, seen: &seen)
+                    result.photosAdded += changed.photos
+                    if changed.genre { result.genresFixed += 1 }
+                } else {
+                    result.skipped += 1
+                }
+                if i % 20 == 19 { try? context.save() }
+                continue
+            }
             var group: [SeenPhoto] = []
             for photo in item.photos.sorted(by: { $0.date < $1.date }) {
                 let id: String
@@ -177,6 +211,7 @@ extension Scanner {
                                           presetPlace: item.place) {
                 meal.endDate = max(meal.endDate, item.endDate)
                 existing.append((date: meal.date, latitude: meal.latitude, longitude: meal.longitude))
+                known.append(meal)
                 result.added += 1
                 Metrics.count("pcImports")
             }
@@ -187,6 +222,36 @@ extension Scanner {
         SeenStore.save(seen)
         try? context.save()
         return result
+    }
+
+    /// PC から前に入れた食事を、新しいファイルの中身で直す（写真を足す・ジャンルを直す）。地図も AI も呼ばない
+    func refreshFromPC(_ meal: Meal, with item: ImportMeal, seen: inout [String: SeenPhoto]) -> (photos: Int, genre: Bool) {
+        var prints = Set(meal.photoIDs.compactMap { ImportedPhotos.digest(of: $0) })
+        var added = 0
+        for photo in item.photos.sorted(by: { $0.date < $1.date }) {
+            if let local = PCImport.libraryMatch(photo.date) {
+                guard !meal.photoIDs.contains(local) else { continue }
+                meal.photoIDs.append(local)
+                seen[local] = SeenPhoto(id: local, date: photo.date, latitude: item.latitude, longitude: item.longitude,
+                                        accuracy: item.accuracy, food: 1, label: "", used: true)
+                added += 1
+                continue
+            }
+            let fingerprint = ImportedPhotos.digest(photo.jpeg)
+            guard !prints.contains(fingerprint), let saved = ImportedPhotos.save(photo.jpeg) else { continue }
+            prints.insert(fingerprint)
+            meal.photoIDs.append(saved)
+            added += 1
+        }
+        var genre = false
+        if !meal.genreByHand, item.verdict.is_meal, meal.genre != item.verdict.genre {
+            meal.genre = item.verdict.genre
+            meal.dishes = Matcher.canonicalDishes(item.verdict.dishes.filter { !$0.isEmpty }, book: dishBook)
+            meal.summary = item.verdict.summary
+            meal.kind = item.verdict.kind
+            genre = true
+        }
+        return (added, genre)
     }
 }
 
@@ -249,11 +314,15 @@ struct PCImportView: View {
                 total.notMeal += r.notMeal
                 total.fromLibrary += r.fromLibrary
                 total.fromFile += r.fromFile
+                total.photosAdded += r.photosAdded
+                total.genresFixed += r.genresFixed
             } catch {
                 message = "読めませんでした（\(url.lastPathComponent)）"
                 return
             }
         }
         message = "\(total.added) 食を足しました（もうあった \(total.skipped)・食事ではない \(total.notMeal)）。写真は 写真アプリから \(total.fromLibrary) 枚・ファイルから \(total.fromFile) 枚。"
+            + (total.photosAdded + total.genresFixed > 0
+               ? "前に入れた食事に写真を \(total.photosAdded) 枚足し、ジャンルを \(total.genresFixed) 件直しました。" : "")
     }
 }
