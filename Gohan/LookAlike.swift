@@ -31,25 +31,65 @@ enum LookAlike {
         ]
     }
 
+    /// Google の料金を使いすぎないための、月の上限（本人「Google は使いすぎ注意」2026-11-25）
+    static let monthlyShopLookups = 150   // 写真の無いお店を Google で調べる回数
+    static let monthlyPhotoFetches = 300  // Google から取るお店の写真の枚数
+
     /// 紹介写真のある候補（点数の高い 8 軒のうち、4 軒まで）
     static func pickable(_ ranked: [PlaceCandidate]) -> [PlaceCandidate] {
         Array(ranked.prefix(8).filter { !$0.photo.isEmpty && !$0.closedThen }.prefix(4))
+    }
+
+    /// 見比べる候補をそろえる。紹介写真の無い上位のお店は、Google で名前から探して写真を取ってくる（迷ったときだけ・月の上限まで）
+    static func withPhotos(_ ranked: [PlaceCandidate], latitude: Double, longitude: Double) async -> [PlaceCandidate] {
+        var out: [PlaceCandidate] = []
+        for c in ranked.prefix(8) where !c.closedThen {
+            if out.count >= 4 { break }
+            if !c.photo.isEmpty { out.append(c); continue }
+            guard KeyStore.googleKey != nil, Metrics.value("lookupShops") < monthlyShopLookups else { continue }
+            Metrics.count("lookupShops")
+            let found = await GooglePlaces.text(c.name, latitude: c.latitude, longitude: c.longitude, radius: 300)
+            let core = Matcher.coreName(c.name)
+            guard let hit = found.first(where: {
+                !$0.photo.isEmpty && Matcher.similarity(Matcher.coreName($0.name), core) >= 0.6
+                    && Matcher.distance($0.latitude, $0.longitude, c.latitude, c.longitude) <= 250
+            }) else { continue }
+            var filled = c
+            filled.photo = hit.photo
+            filled.morePhotos = hit.morePhotos
+            if filled.hours.isEmpty { filled.hours = hit.hours }
+            out.append(filled)
+        }
+        return out
+    }
+
+    /// お店の写真を何枚か取り、料理が写っていそうな順に best 枚を返す（端末の見分けで並べる。外観・店内より料理を見比べたい）
+    static func foodPhotos(of shop: PlaceCandidate, best: Int = 2) async -> [Data] {
+        var scored: [(food: Double, data: Data)] = []
+        for ref in ([shop.photo] + shop.morePhotos).filter({ !$0.isEmpty }).prefix(4) {
+            if ref.hasPrefix("places/"), Metrics.value("googlePhotos") >= monthlyPhotoFetches { break }
+            guard let data = await image(ref), let ui = UIImage(data: data) else { continue }
+            let food = await Task.detached(priority: .utility) { PhotoVision.look(ui).food }.value
+            scored.append((food, data))
+        }
+        return scored.sorted { $0.food > $1.food }.prefix(best).map(\.data)
     }
 
     /// 見比べてもらう。合うお店があれば、そのお店と答えを返す
     static func ask(food: [Data], shops: [PlaceCandidate]) async throws -> (shop: PlaceCandidate, answer: Answer)? {
         guard ClaudeLink.isReady else { throw ClaudeError.noKey }
         guard Spend.canSpend else { throw ClaudeError.capped }
-        var named: [(shop: PlaceCandidate, data: Data)] = []
+        var named: [(shop: PlaceCandidate, photos: [Data])] = []
         for shop in shops {
-            if let data = await image(shop.photo) { named.append((shop, data)) }
+            let photos = await foodPhotos(of: shop)
+            if !photos.isEmpty { named.append((shop, photos)) }
         }
         guard !named.isEmpty, !food.isEmpty else { return nil }
         var content: [[String: Any]] = [["type": "text", "text": "食事の写真:"]]
         for data in food.prefix(2) { content.append(block(data)) }
         for (i, item) in named.enumerated() {
-            content.append(["type": "text", "text": "候補 \(i): \(item.shop.name)（\(Int(item.shop.distance.rounded()))m）の紹介写真"])
-            content.append(block(item.data))
+            content.append(["type": "text", "text": "候補 \(i): \(item.shop.name)（\(Int(item.shop.distance.rounded()))m）の紹介写真（\(item.photos.count) 枚）"])
+            for data in item.photos { content.append(block(data)) }
         }
         content.append(["type": "text", "text": "食事の写真に一番合う候補の番号を選んでください。"])
         var body: [String: Any] = [

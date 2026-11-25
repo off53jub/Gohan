@@ -443,9 +443,23 @@ final class Scanner {
                     meal.source += "+google"
                 }
             }
-            // 4. まだ迷っていれば、候補のお店の紹介写真と見比べてもらう（写真のある候補だけ・新しい写真だけ）
-            if meal.confidence < 0.6, !old, ClaudeLink.isReady, Spend.canSpend, !foodJPEGs.isEmpty {
-                let shops = LookAlike.pickable(meal.candidates)
+            // 4a. まだ迷っていれば、料理の写真で画像検索する（似た写真がのったページの題名に、候補のお店の名前があるか）
+            //     昔の写真でも動く。月の上限まで（2026-11-25）
+            var webTitles: [String] = []
+            if preset == nil, meal.confidence < 0.6, !meal.aiPending, ImageSearch.canUse, let photo = foodJPEGs.first {
+                status = "似た写真を探しています"
+                if let result = await ImageSearch.search(photo) {
+                    webTitles = Array((result.titles + result.entities).prefix(8))
+                    if let hit = ImageSearch.match(result, candidates: Array(meal.candidates.prefix(12))), 0.7 > meal.confidence {
+                        setPlace(hit, on: meal, confidence: 0.7, reason: "似た写真がのったページにこのお店の名前がありました", context: context)
+                        meal.source += "+image"
+                    }
+                }
+            }
+            // 4b. まだ迷っていれば、候補のお店の紹介写真と見比べてもらう。紹介写真の無い上位のお店は Google で写真を取ってくる
+            //     （料理が写っていそうな写真を 1 軒 2 枚まで）。昔の写真でも動く。月の上限まで（2026-11-25）
+            if preset == nil, meal.confidence < 0.6, !meal.aiPending, ClaudeLink.isReady, Spend.canSpend, !foodJPEGs.isEmpty {
+                let shops = await LookAlike.withPhotos(meal.candidates, latitude: spot.latitude, longitude: spot.longitude)
                 if !shops.isEmpty {
                     status = "お店の写真と見比べています"
                     if let found = try? await LookAlike.ask(food: foodJPEGs, shops: shops),
@@ -462,7 +476,7 @@ final class Scanner {
                 status = "ネットで確かめています"
                 let hint = WebCheck.Hint(area: [meal.region, meal.area].filter { !$0.isEmpty }.joined(separator: " "),
                                          nameSeen: verdict?.name_seen ?? "", genre: meal.genre, dishes: meal.dishes,
-                                         candidates: ranked.prefix(5).map(\.name), lines: Array((receipt + lines).prefix(15)))
+                                         candidates: ranked.prefix(5).map(\.name), lines: Array((receipt + lines).prefix(15)) + webTitles)
                 if let answer = try? await WebCheck.ask(hint), answer.confidence >= 0.5,
                    let found = await research(name: answer.name, current: meal.place, latitude: spot.latitude, longitude: spot.longitude, radius: 1500, google: true) {
                     setPlace(found, on: meal, confidence: min(0.85, answer.confidence), reason: "ネットで確かめました（\(answer.name)）", context: context)

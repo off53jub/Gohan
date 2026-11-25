@@ -127,7 +127,11 @@ enum GooglePlaces {
             if let periods = (p["regularOpeningHours"] as? [String: Any])?["periods"] as? [[String: Any]] {
                 c.hours = OpenHours.googleText(periods)
             }
-            if let photos = p["photos"] as? [[String: Any]], let ref = photos.first?["name"] as? String { c.photo = ref }
+            if let photos = p["photos"] as? [[String: Any]] {
+                let refs = photos.compactMap { $0["name"] as? String }
+                c.photo = refs.first ?? ""
+                c.morePhotos = Array(refs.dropFirst().prefix(4))
+            }
             return c
         }
     }
