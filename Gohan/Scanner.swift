@@ -216,14 +216,20 @@ final class Scanner {
     /// 前の読み込みで作った食事の続き（同じお店で、あとから撮った写真）なら、そこに足す
     private func appendToRecentMeal(_ group: [SeenPhoto], context: ModelContext) -> Bool {
         guard let first = group.first, let last = group.last else { return true }
-        let from = first.date.addingTimeInterval(-Matcher.mealGap)
+        let from = first.date.addingTimeInterval(-Matcher.longMealGap)
         let to = first.date
+        let shortFrom = first.date.addingTimeInterval(-Matcher.mealGap)
         let descriptor = FetchDescriptor<Meal>(predicate: #Predicate { $0.endDate >= from && $0.endDate <= to })
         guard let meals = try? context.fetch(descriptor) else { return false }
         let spot = Matcher.center(of: group)
         for meal in meals where !meal.hidden {
             if let spot, let lat = meal.latitude, let lon = meal.longitude,
                Matcher.distance(lat, lon, spot.latitude, spot.longitude) > Matcher.mealDistance { continue }
+            // 40 分より前に終わった食事は、同じ場所（100m 以内）と分かるときだけつなぐ（飲み会・コース）
+            if meal.endDate < shortFrom {
+                guard let spot, let lat = meal.latitude, let lon = meal.longitude,
+                      Matcher.distance(lat, lon, spot.latitude, spot.longitude) <= Matcher.sameSpotDistance else { continue }
+            }
             meal.photoIDs.append(contentsOf: group.map(\.id).filter { !meal.photoIDs.contains($0) })
             meal.endDate = max(meal.endDate, last.date)
             return true
@@ -246,7 +252,9 @@ final class Scanner {
             usedVisit = true
         }
         let stay = visit?.minutes.flatMap { $0 > 0 && $0 < 600 ? $0 : nil }
-        let meal = Meal(date: first.date, endDate: last.date, photoIDs: group.map(\.id),
+        // 料理の写真のあとに、食事中に同じ場所で撮ったほかの写真（人・お店の中）も入れる。表紙は料理のまま（2026-11-25）
+        let companions = ScanSettings.companions ? Matcher.companionPhotos(for: group, among: all).map(\.id) : []
+        let meal = Meal(date: first.date, endDate: last.date, photoIDs: group.map(\.id) + companions,
                         latitude: spot?.latitude, longitude: spot?.longitude)
         let label = group.max { $0.food < $1.food }?.label ?? ""
         meal.visionLabel = label
@@ -263,7 +271,8 @@ final class Scanner {
         // 料理の写真（多ければ散らして3枚）と、前後の手がかりの写真
         var lines: [String] = presetLines
         var foodJPEGs: [Data] = []
-        for photo in Self.spread(group.sorted { $0.food > $1.food }, count: 3) {
+        // 料理の写真は 4 枚まで AI に見せる（3 枚だと、ラーメンと丼・つけ麺とそばの見分けに足りないことがあった。2026-11-25）
+        for photo in Self.spread(group.sorted { $0.food > $1.food }, count: 4) {
             guard let image = await loadImage(photo, side: 1024) else { continue }
             lines += await Task.detached(priority: .utility) { PhotoVision.text(image) }.value
             if let data = await sendable(image) { foodJPEGs.append(data) }
@@ -545,6 +554,10 @@ final class Scanner {
             }
             if meal.genre == "その他", let pick, let g = Matcher.candidateGenre(pick) { meal.genre = g }
             meal.reason = Matcher.reason(for: pick, source: forcedPick != nil ? "known" : "device", receipt: false)
+        }
+        // ジャンルを料理の名前・お店とそろえる（本人が直したものは触らない）
+        if !meal.genreByHand {
+            meal.genre = Matcher.consistentGenre(meal.genre, dishes: meal.dishes, shop: meal.eatenOut ? pick : nil, shopConfidence: confidence)
         }
         if let pick, meal.eatenOut {
             let place = PlaceBook.place(for: pick, date: meal.date, context: context)
