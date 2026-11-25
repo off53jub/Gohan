@@ -252,6 +252,7 @@ struct AdvancedSettingsView: View {
     @State private var videos = ScanSettings.videos
     @State private var companions = ScanSettings.companions
     @State private var imageSearch = AISettings.imageSearch
+    @State private var escalate = AISettings.escalate
     @State private var confirmReset = false
     @State private var giving = false
     @State private var webCheck = AISettings.webCheck
@@ -271,6 +272,7 @@ struct AdvancedSettingsView: View {
         let shops = "お店の写真を探した \(Metrics.value("lookupShops"))/\(LookAlike.monthlyShopLookups) 軒"
         let photos = "取った写真 \(Metrics.value("googlePhotos"))/\(LookAlike.monthlyPhotoFetches) 枚・見比べた \(Metrics.value("lookAlikes")) 回"
         lines.append("迷ったとき: " + search + "・" + shops + "・" + photos)
+        lines.append("強いモデルで聞き直した \(Metrics.value("escalations")) 回・ふたり帖の答えで補った \(Metrics.value("partnerFixes")) 回")
         if let p = GooglePlaces.lastProblem { lines.append("Google の最後の失敗: " + p) }
         if let p = ImageSearch.lastProblem { lines.append("画像検索の最後の失敗: " + p) }
         return lines.joined(separator: "\n")
@@ -347,6 +349,8 @@ struct AdvancedSettingsView: View {
                 Toggle("食事中に撮ったほかの写真（人・お店の中）も入れる", isOn: $companions)
                     .onChange(of: companions) { _, new in ScanSettings.companions = new }
                 Toggle("迷ったときだけ、AI にネットで確かめてもらう", isOn: $webCheck).onChange(of: webCheck) { _, new in AISettings.webCheck = new }
+                Toggle("迷ったときだけ、いちばん強いモデル（Opus）に聞き直す", isOn: $escalate)
+                    .onChange(of: escalate) { _, new in AISettings.escalate = new }
                 Toggle("迷ったときだけ、料理の写真で画像検索（Google・月 \(ImageSearch.monthlyCap) 回まで）", isOn: $imageSearch)
                     .onChange(of: imageSearch) { _, new in AISettings.imageSearch = new }
             } header: {

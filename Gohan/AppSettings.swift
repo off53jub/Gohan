@@ -89,6 +89,12 @@ enum AISettings {
         set { d.set(newValue, forKey: "ai.webCheck") }
     }
 
+    /// 迷ったときだけ、いちばん強いモデル（Opus）に聞き直す（2026-11-26）
+    static var escalate: Bool {
+        get { d.object(forKey: "ai.escalate") as? Bool ?? true }
+        set { d.set(newValue, forKey: "ai.escalate") }
+    }
+
     /// 迷ったとき、料理の写真で画像検索する（Google Cloud Vision。月の上限つき。2026-11-25 実験）
     static var imageSearch: Bool {
         get { d.object(forKey: "ai.imageSearch") as? Bool ?? true }
