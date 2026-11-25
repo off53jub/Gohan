@@ -144,9 +144,9 @@ extension Scanner {
         var seen = SeenStore.load()
         let meals = file.meals.sorted { $0.date < $1.date }
         // Apple のマップの検索は 1 分に約 50 回まで（超えると黙って空が返り、お店が決まらない）。
-        // 食事が多いファイルは 1 食に 6 秒ずつかけて、超えないようにする
+        // PC からの食事は名前の検索をしないので 1 食あたり 1〜2 回。食事が多いファイルは 1 食に 3 秒ずつかけて、超えないようにする
         let paced = meals.count > 20
-        let pace: TimeInterval = 6
+        let pace: TimeInterval = 3
         for (i, item) in meals.enumerated() {
             if Task.isCancelled { break }
             let left = paced ? Int((Double(meals.count - i) * pace / 60).rounded(.up)) : 0
@@ -215,7 +215,7 @@ struct PCImportView: View {
                 }
                 if let message { Text(message) }
             } footer: {
-                Text("PC の道具（tools/photo-import）で作った「ごはん帖の取り込み」のファイルを選びます。料理の名前や看板の店名は PC で読んであるので、このアプリの AI は使いません（お金はかかりません）。お店は地図とホットペッパーで探します。もう記録にある食事は足しません。食事の多いファイルは 1 食に 6 秒ずつかけます（地図の検索の回数の上限のため）。取り込みの間はこの画面のままにしてください。")
+                Text("PC の道具（tools/photo-import）で作った「ごはん帖の取り込み」のファイルを選びます。料理の名前や看板の店名は PC で読んであるので、このアプリの AI は使いません（お金はかかりません）。お店は地図とホットペッパーで探します。もう記録にある食事は足しません。食事の多いファイルは 1 食に 3 秒ずつかけます（地図の検索の回数の上限のため）。取り込みの間はこの画面のままにしてください。")
             }
             Section {
                 LabeledContent("今月 取り込んだ食事", value: "\(Metrics.value("pcImports"))")

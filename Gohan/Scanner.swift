@@ -298,8 +298,9 @@ final class Scanner {
             var lists = [await PlaceFinder.nearbyAll(latitude: spot.latitude, longitude: spot.longitude, radius: radius)]
             var queries = receipt + Matcher.searchableLines(lines)
             if let event { queries.append(event) }
-            // PC から取り込むときは検索の回数を絞る（何百食も続けて調べるので、地図の検索の上限に当たらないように）
-            for query in queries.prefix(preset == nil ? 5 : 2) {
+            // PC から取り込むときは名前で探さない（何千食も続けて調べるので、地図の検索の上限に当たらないように。
+            // PC で選んだお店・写真から読んだ店名は、あとで 1 回だけ探す）
+            for query in queries.prefix(preset == nil ? 5 : 0) {
                 lists.append(await PlaceFinder.searchAll(query, latitude: spot.latitude, longitude: spot.longitude, radius: 700))
             }
             lists.append(PlaceBook.visited(near: spot.latitude, spot.longitude, context: context))
