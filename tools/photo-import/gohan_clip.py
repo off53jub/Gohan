@@ -318,7 +318,7 @@ def main() -> None:
     ap.add_argument("--work", default=str(gi.DEFAULT_WORK))
     sub = ap.add_subparsers(dest="cmd", required=True)
     s = sub.add_parser("screen")
-    s.add_argument("--threads", type=int, default=8)
+    s.add_argument("--threads", type=int, default=16, help="写真を同時に読む数（pCloud は 16 本で約 6 枚/秒）")
     s.add_argument("--sure", type=float, default=0.85, help="ご飯・手がかりと決めるしきい値（仮）")
     s.add_argument("--sure-no", type=float, default=0.9, help="ほかと決めるしきい値（仮）")
     s.set_defaults(func=cmd_screen)

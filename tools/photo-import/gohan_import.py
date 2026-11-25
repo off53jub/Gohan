@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import hashlib
 import io
 import json
 import math
@@ -130,20 +131,43 @@ def cmd_scan(args) -> None:
     since = datetime.fromisoformat(args.since).replace(tzinfo=JST) if args.since else None
     until = datetime.fromisoformat(args.until).replace(tzinfo=JST) + timedelta(days=1) if args.until else None
     old = {p["path"]: p for p in load(work / "photos.json", [])}
-    rows = []
+    # 何万枚もあると 1 本の exiftool では何時間もかかり、途中も見えない。
+    # すぐ下のフォルダ（年ごとなど）に分けて、新しい順に同時に読む。読み終えた分は scan-parts に残し、やり直しでは飛ばす
+    jobs: list[tuple[str, bool]] = []
     for source in args.source:
-        print(f"写真を読んでいます: {source}", flush=True)
+        subs = sorted((d for d in Path(source).iterdir() if d.is_dir()), key=lambda d: d.name, reverse=True)
+        jobs += [(str(d), True) for d in subs] + [(source, False)]
+    parts = work / "scan-parts"
+    parts.mkdir(parents=True, exist_ok=True)
+
+    def read(job: tuple[str, bool]) -> list[dict]:
+        folder, recursive = job
+        # 引数ファイルの名前も日本語だと exiftool が開けないので、英数字だけにする
+        key = hashlib.sha1(folder.encode("utf-8")).hexdigest()[:12] + ("" if recursive else "_top")
+        cached = parts / f"{key}.json"
+        if cached.exists():
+            return load(cached, [])
+        started = time.time()
         # Windows では日本語のフォルダ名をコマンドの引数で渡すと exiftool が読めない → UTF-8 の引数ファイルで渡す
-        argfile = work / "exiftool-args.txt"
-        argfile.parent.mkdir(parents=True, exist_ok=True)
-        argfile.write_text(source + "\n", encoding="utf-8")
+        argfile = parts / f"{key}.args"
+        argfile.write_text(folder + "\n", encoding="utf-8")
         out = subprocess.run(
-            ["exiftool", "-json", "-n", "-r", "-q", "-q", "-charset", "filename=utf8",
+            ["exiftool", "-json", "-n", *(["-r"] if recursive else []), "-q", "-q", "-charset", "filename=utf8",
              *sum((["-ext", e.lstrip(".")] for e in PHOTO_EXT), []),
              "-DateTimeOriginal", "-OffsetTimeOriginal", "-CreateDate", "-GPSLatitude", "-GPSLongitude",
              "-GPSHPositioningError", "-Model", "-@", str(argfile)],
             capture_output=True, check=False)
-        rows += json.loads(out.stdout.decode("utf-8") or "[]")
+        found = json.loads(out.stdout.decode("utf-8") or "[]")
+        save(cached, found)
+        print(f"  読み終えた: {folder}{'' if recursive else '（直下）'} {len(found)} 枚・{(time.time() - started) / 60:.0f} 分",
+              flush=True)
+        return found
+
+    print(f"写真を読んでいます: {len(jobs)} フォルダを {args.threads} 本ずつ", flush=True)
+    rows = []
+    with ThreadPoolExecutor(max_workers=args.threads) as pool:
+        for found in pool.map(read, jobs):
+            rows += found
     photos = []
     for r in rows:
         path = Path(r["SourceFile"])
@@ -530,6 +554,7 @@ def main() -> None:
     s.add_argument("--source", action="append", required=True, help="写真のフォルダ（何回でも）")
     s.add_argument("--since", help="この日から（YYYY-MM-DD）")
     s.add_argument("--until", help="この日まで（YYYY-MM-DD）")
+    s.add_argument("--threads", type=int, default=4, help="同時に読むフォルダの数")
     s.set_defaults(func=cmd_scan)
     s = sub.add_parser("sheets")
     s.add_argument("--threads", type=int, default=8)
