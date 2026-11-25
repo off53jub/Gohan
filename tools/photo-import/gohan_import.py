@@ -133,11 +133,15 @@ def cmd_scan(args) -> None:
     rows = []
     for source in args.source:
         print(f"写真を読んでいます: {source}", flush=True)
+        # Windows では日本語のフォルダ名をコマンドの引数で渡すと exiftool が読めない → UTF-8 の引数ファイルで渡す
+        argfile = work / "exiftool-args.txt"
+        argfile.parent.mkdir(parents=True, exist_ok=True)
+        argfile.write_text(source + "\n", encoding="utf-8")
         out = subprocess.run(
             ["exiftool", "-json", "-n", "-r", "-q", "-q", "-charset", "filename=utf8",
              *sum((["-ext", e.lstrip(".")] for e in PHOTO_EXT), []),
              "-DateTimeOriginal", "-OffsetTimeOriginal", "-CreateDate", "-GPSLatitude", "-GPSLongitude",
-             "-GPSHPositioningError", "-Model", source],
+             "-GPSHPositioningError", "-Model", "-@", str(argfile)],
             capture_output=True, check=False)
         rows += json.loads(out.stdout.decode("utf-8") or "[]")
     photos = []
@@ -327,8 +331,82 @@ out center tags;"""
     return out[:30]
 
 
+TILE = 0.02   # 約 2km 四方。食事が何千回でも、Overpass への問い合わせはタイルの数だけで済む
+
+
+def overpass_box(s: float, w: float, n: float, e: float) -> list[dict]:
+    q = f"""[out:json][timeout:90];
+(nwr({s},{w},{n},{e})["amenity"~"^(restaurant|cafe|fast_food|bar|pub|food_court|ice_cream|biergarten)$"]["name"];
+ nwr({s},{w},{n},{e})["shop"~"^(bakery|confectionery|pastry|deli|tea|coffee)$"]["name"];);
+out center tags;"""
+    last = None
+    for attempt in range(3):
+        for server in OVERPASS:
+            try:
+                req = urllib.request.Request(server, data=urllib.parse.urlencode({"data": q}).encode(), headers=HEADERS)
+                with urllib.request.urlopen(req, timeout=120) as r:
+                    elements = json.loads(r.read().decode("utf-8")).get("elements", [])
+                out = []
+                for el in elements:
+                    t = el.get("tags", {})
+                    la = el.get("lat") or (el.get("center") or {}).get("lat")
+                    lo = el.get("lon") or (el.get("center") or {}).get("lon")
+                    if la is not None:
+                        out.append({"name": t.get("name:ja") or t.get("name"), "lat": la, "lon": lo,
+                                    "kind": t.get("amenity") or t.get("shop"), "cuisine": t.get("cuisine", ""),
+                                    "branch": t.get("branch", ""), "floor": t.get("level", "")})
+                return out
+            except Exception as ex:
+                last = ex
+                print(f"    {server.split('/')[2]}: {ex}", file=sys.stderr, flush=True)
+        time.sleep(10 * (attempt + 1))
+    raise RuntimeError(f"どのサーバーも答えませんでした（{last}）")
+
+
+def cmd_nearby_tiles(args) -> None:
+    """食事の多いとき: 2km 四方ずつまとめて OpenStreetMap のお店を取り、食事ごとの候補はこちらで計算する"""
+    work = Path(args.work)
+    meals = load(work / "meals.json", [])
+    cache = work / "osm"
+    cache.mkdir(parents=True, exist_ok=True)
+    keys = sorted({(math.floor(m["lat"] / TILE), math.floor(m["lon"] / TILE)) for m in meals if m.get("lat") is not None})
+    todo = [k for k in keys if not (cache / f"{k[0]}_{k[1]}.json").exists()]
+    print(f"お店の地図: {len(keys)} 区画（まだ {len(todo)}）", flush=True)
+    margin = 0.005   # 区画の端の食事のため、少しはみ出して取る（約 500m）
+    for i, (a, b) in enumerate(todo):
+        try:
+            shops = overpass_box(a * TILE - margin, b * TILE - margin, (a + 1) * TILE + margin, (b + 1) * TILE + margin)
+        except Exception as e:  # あとでもう一度流せば、ここだけやり直す
+            print(f"  {a}_{b}: {e}", file=sys.stderr, flush=True)
+            continue
+        save(cache / f"{a}_{b}.json", shops)
+        print(f"  {i + 1}/{len(todo)} {a}_{b}: {len(shops)} 軒", flush=True)
+        time.sleep(2)
+    done = 0
+    for m in meals:
+        if m.get("lat") is None:
+            continue
+        f = cache / f"{math.floor(m['lat'] / TILE)}_{math.floor(m['lon'] / TILE)}.json"
+        if not f.exists():
+            continue
+        acc = m.get("acc") or 30
+        radius = 400 if acc > 65 else int(max(120, min(300, acc * 3)))
+        near = []
+        for s in load(f, []):
+            d = distance_m(m, s)
+            if d is not None and d <= radius:
+                near.append({**s, "dist": round(d)})
+        near.sort(key=lambda c: c["dist"])
+        m["candidates"] = near[:30]
+        done += 1
+    save(work / "meals.json", meals)
+    print(f"近くのお店を付けた食事: {done} 回", flush=True)
+
+
 def cmd_nearby(args) -> None:
     work = Path(args.work)
+    if args.tiles:
+        return cmd_nearby_tiles(args)
     meals = load(work / "meals.json", [])
     todo = [m for m in meals if m.get("lat") is not None and ("candidates" not in m or "address" not in m)]
     print(f"近くのお店を調べています: {len(todo)} 回", flush=True)
@@ -384,9 +462,28 @@ def cmd_pack(args) -> None:
     if problems:
         sys.exit("答えに足りないところがあります:\n" + "\n".join(problems))
     todo = [m for m in meals if m["id"] in verdicts and (args.all or m["id"] not in packed)]
+    # 自信のないもの（Claude が unsure と書いた）・食事でないものは載せない（本人の方針。2026-11-25）
+    unsure = [m for m in todo if verdicts[m["id"]].get("unsure") or not verdicts[m["id"]]["is_meal"]]
+    todo = [m for m in todo if m not in unsure]
+    # 別の作業フォルダでもう入れた食事（前後 45 分）は飛ばす
+    other = []
+    for w in args.skip_near or []:
+        om = {x["id"]: x for x in load(Path(w) / "meals.json", [])}
+        other += [datetime.fromisoformat(om[i]["date"]) for i in load(Path(w) / "packed.json", []) if i in om]
+    near = [m for m in todo if any(abs(datetime.fromisoformat(m["date"]) - d) <= timedelta(minutes=45) for d in other)]
+    todo = [m for m in todo if m not in near]
+    print(f"載せる {len(todo)} 食（自信なし・食事でない {len(unsure)}、ほかで入れた {len(near)} は飛ばす）", flush=True)
     if not todo:
         print("新しく入れる食事はありません")
         return
+    todo.sort(key=lambda m: m["date"], reverse=True)   # 新しい年から
+    for n in range(0, len(todo), args.per_file):
+        pack_file(args, work, todo[n:n + args.per_file], photos, by_meal, verdicts, n // args.per_file + 1)
+        packed |= {m["id"] for m in todo[n:n + args.per_file]}
+        save(work / "packed.json", sorted(packed))
+
+
+def pack_file(args, work: Path, todo, photos, by_meal, verdicts, part: int) -> None:
     out_meals = []
     for m in todo:
         v = verdicts[m["id"]]
@@ -402,24 +499,25 @@ def cmd_pack(args) -> None:
             "longitude": located[0]["lon"] if located else None,
             "accuracy": min(acc) if acc else None,
             "verdict": verdict, "lines": v.get("lines", []),
-            "photos": [{"date": p["date"], "jpeg": jpeg_b64(p["path"], 1280)} for p in spread([p for p in food], 6)]
+            "photos": [{"date": p["date"], "jpeg": jpeg_b64(p["path"], args.side)} for p in spread([p for p in food], args.max_photos)]
             if v["is_meal"] else [],
         })
         place = None
-        if v.get("place_name"):
+        if v.get("place_name") and float(v.get("place_confidence", 0)) >= args.min_place:
             hit = next((c for c in by_meal[m["id"]].get("candidates", []) if c["name"] == v["place_name"]), None)
             place = {"name": v["place_name"], "latitude": hit["lat"] if hit else None, "longitude": hit["lon"] if hit else None,
                      "confidence": float(v.get("place_confidence", 0.5)), "reason": v.get("place_reason", "")}
         out_meals[-1]["place"] = place
         print(f"  {m['id']} {food[0]['date'][:16]} {v['summary']} @ {v.get('place_name') or '-'}", flush=True)
     stamp = datetime.now(JST).strftime("%Y%m%d-%H%M")
-    out = Path(args.out or work) / f"ごはん帖の取り込み-{stamp}.json"
+    first, last = todo[-1]["date"][:7], todo[0]["date"][:7]
+    out = Path(args.out or work) / f"ごはん帖の取り込み-{stamp}-{part:02d}（{first}〜{last}）.json"
     data = {"kind": "gohan.import", "version": 1, "made": datetime.now(JST).isoformat(timespec="seconds"),
             "source": args.label, "meals": out_meals}
+    out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
-    save(work / "packed.json", sorted(packed | {m["id"] for m in todo}))
     size = out.stat().st_size / 1_000_000
-    print(f"{len(out_meals)} 食 → {out}（{size:.1f} MB）")
+    print(f"{len(out_meals)} 食 → {out}（{size:.1f} MB）", flush=True)
 
 
 # ---------------------------------------------------------------- main
@@ -437,11 +535,18 @@ def main() -> None:
     s.add_argument("--threads", type=int, default=8)
     s.set_defaults(func=cmd_sheets)
     sub.add_parser("group").set_defaults(func=cmd_group)
-    sub.add_parser("nearby").set_defaults(func=cmd_nearby)
+    s = sub.add_parser("nearby")
+    s.add_argument("--tiles", action="store_true", help="食事が多いとき: 2km 四方ずつまとめて取る（住所は付けない）")
+    s.set_defaults(func=cmd_nearby)
     s = sub.add_parser("pack")
     s.add_argument("--out", help="ファイルを置くフォルダ（既定は作業フォルダ）")
     s.add_argument("--label", default="PC", help="どこの写真か（アプリに表示）")
     s.add_argument("--all", action="store_true", help="前に入れた食事も入れ直す")
+    s.add_argument("--per-file", type=int, default=150, help="1 つのファイルに入れる食事の数（iPhone で一度に読む量）")
+    s.add_argument("--side", type=int, default=1280, help="写真の長い辺（px）")
+    s.add_argument("--max-photos", type=int, default=6, help="1 食あたりの写真の数")
+    s.add_argument("--min-place", type=float, default=0.0, help="この自信より低いお店は載せない（アプリに任せる）")
+    s.add_argument("--skip-near", action="append", help="別の作業フォルダでもう入れた食事を飛ばす（何回でも）")
     s.set_defaults(func=cmd_pack)
     args = ap.parse_args()
     if Path(args.work).resolve().is_relative_to(Path(__file__).resolve().parents[2]):

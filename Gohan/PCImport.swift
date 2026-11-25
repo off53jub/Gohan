@@ -143,9 +143,14 @@ extension Scanner {
         var existing = current.map { (date: $0.date, latitude: $0.latitude, longitude: $0.longitude) }
         var seen = SeenStore.load()
         let meals = file.meals.sorted { $0.date < $1.date }
+        // Apple のマップの検索は 1 分に約 50 回まで（超えると黙って空が返り、お店が決まらない）。
+        // 食事が多いファイルは 1 食に 6 秒ずつかけて、超えないようにする
+        let paced = meals.count > 20
+        let pace: TimeInterval = 6
         for (i, item) in meals.enumerated() {
             if Task.isCancelled { break }
-            progress("\(i + 1)/\(meals.count)")
+            let left = paced ? Int((Double(meals.count - i) * pace / 60).rounded(.up)) : 0
+            progress("\(i + 1)/\(meals.count)" + (left > 1 ? "（あと約 \(left) 分）" : ""))
             if !item.verdict.is_meal { result.notMeal += 1; continue }
             if PCImport.isDuplicate(item, existing: existing) { result.skipped += 1; continue }
             var group: [SeenPhoto] = []
@@ -167,6 +172,7 @@ extension Scanner {
                 if !ImportedPhotos.isFile(id) { seen[id] = seenPhoto }
             }
             guard !group.isEmpty else { continue }
+            let started = Date()
             if let meal = await buildMeal(group, all: [], context: context, old: true, preset: item.verdict, presetLines: item.lines,
                                           presetPlace: item.place) {
                 meal.endDate = max(meal.endDate, item.endDate)
@@ -175,6 +181,8 @@ extension Scanner {
                 Metrics.count("pcImports")
             }
             if i % 10 == 9 { try? context.save() }
+            let wait = pace - Date().timeIntervalSince(started)
+            if paced, wait > 0 { try? await Task.sleep(for: .seconds(wait)) }
         }
         SeenStore.save(seen)
         try? context.save()
@@ -207,7 +215,7 @@ struct PCImportView: View {
                 }
                 if let message { Text(message) }
             } footer: {
-                Text("PC の道具（tools/photo-import）で作った「ごはん帖の取り込み」のファイルを選びます。料理の名前や看板の店名は PC で読んであるので、このアプリの AI は使いません（お金はかかりません）。お店は地図とホットペッパーで探します。もう記録にある食事は足しません。")
+                Text("PC の道具（tools/photo-import）で作った「ごはん帖の取り込み」のファイルを選びます。料理の名前や看板の店名は PC で読んであるので、このアプリの AI は使いません（お金はかかりません）。お店は地図とホットペッパーで探します。もう記録にある食事は足しません。食事の多いファイルは 1 食に 6 秒ずつかけます（地図の検索の回数の上限のため）。取り込みの間はこの画面のままにしてください。")
             }
             Section {
                 LabeledContent("今月 取り込んだ食事", value: "\(Metrics.value("pcImports"))")
@@ -223,7 +231,12 @@ struct PCImportView: View {
 
     private func run(_ urls: [URL]) async {
         running = true
-        defer { running = false }
+        // 食事が多いと何十分もかかる。画面が消えるとアプリが止まるので、取り込みの間は消さない
+        UIApplication.shared.isIdleTimerDisabled = true
+        defer {
+            running = false
+            UIApplication.shared.isIdleTimerDisabled = false
+        }
         var total = PCImport.Result()
         for url in urls {
             let scoped = url.startAccessingSecurityScopedResource()

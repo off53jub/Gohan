@@ -27,6 +27,27 @@ uv run gohan_import.py pack --label pCloud
 - iPhone の写真アプリに同じ写真があれば（撮った時刻が 2 秒以内）、アプリはそちらを使います。無ければ写真をアプリの中に置きます。
 - もう記録にある食事（前後 45 分・300m 以内）は足しません。
 
+## 何年分もあるとき（PC の無料モデルで一次判定）
+
+何万枚もあると、全部を Claude に見せるのは重いので、PC の無料モデル（CLIP・GPU）で先に分けます。
+自信のあるものは無料モデルの答えのまま、自信のないものだけ Claude（軽いモデル）に見せ、それでも自信のないものは載せません。
+
+```powershell
+uv run gohan_import.py --work D:\GohanImport\toshu scan --source "P:\れんげ食堂toshu"
+uv run gohan_clip.py   --work D:\GohanImport\toshu screen     # ご飯・手がかり・ほか。迷った写真は screen_unsure.json
+uv run gohan_import.py --work D:\GohanImport\toshu sheets     # 迷った写真だけの一覧画像 → Claude が screen.json に足す
+uv run gohan_import.py --work D:\GohanImport\toshu group
+uv run gohan_clip.py   --work D:\GohanImport\toshu meals      # ジャンルに自信のある食事は verdicts.json へ
+uv run gohan_import.py --work D:\GohanImport\toshu group      # 残りの食事の画像を作り直す → Claude が verdicts へ（unsure も）
+uv run gohan_import.py --work D:\GohanImport\toshu nearby --tiles
+uv run gohan_clip.py   --work D:\GohanImport\toshu places     # 近くに合うお店が 1 軒だけのときだけお店を決める
+uv run gohan_import.py --work D:\GohanImport\toshu pack --label pCloud --per-file 150 --side 1024 --max-photos 3 --min-place 0.6 --skip-near D:\GohanImport
+```
+
+- 無料モデルが決めた食事は、料理の細かい名前（醤油・味噌など）を付けず、ジャンルだけにします（外れが多かったため）。
+- しきい値は仮です（前の 414 枚・40 食で Claude の答えと比べて決めた）。
+- ファイルは 150 食ずつ、新しい年から。アプリは食事が多いファイルを 1 食 6 秒ずつ取り込みます（地図の検索の上限のため）。
+
 ## Claude に頼むこと
 
 ### screen.json（一覧画像を見て）
