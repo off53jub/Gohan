@@ -362,7 +362,7 @@ struct AdvancedSettingsView: View {
             } header: {
                 Text("お店の候補を増やす")
             } footer: {
-                Text("Apple のマップに載っていないお店も候補に入ります。鍵は自分で取って、この iPhone にだけ置きます。写真の位置（だいたいの場所）がそれぞれの会社に送られます。今月の呼び出し: Google \(Metrics.value("googleCalls")) 回・ホットペッパー \(Metrics.value("hotpepperCalls")) 回・ネットで確かめた \(Metrics.value("webChecks")) 回")
+                Text("Apple のマップに載っていないお店も候補に入ります。鍵は自分で取って、この iPhone にだけ置きます。写真の位置（だいたいの場所）がそれぞれの会社に送られます。今月の呼び出し: Google \(Metrics.value("googleCalls")) 回（失敗 \(Metrics.value("googleErrors")) 回）・ホットペッパー \(Metrics.value("hotpepperCalls")) 回・ネットで確かめた \(Metrics.value("webChecks")) 回" + (GooglePlaces.lastProblem.map { "\nGoogle の最後の失敗: \($0)" } ?? ""))
             }
             Section {
                 NavigationLink("試験（当たり方を比べる）") { EvalView() }

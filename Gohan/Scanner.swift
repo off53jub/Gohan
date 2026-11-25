@@ -395,7 +395,8 @@ final class Scanner {
                 meal.source += "+place"
             }
             // Apple・ホットペッパーで見つからない（お店が決まらない・自信が低い）ときだけ、Google でも探す（本人の希望。2026-11-24）
-            if preset == nil, meal.place == nil || meal.confidence < 0.6, KeyStore.googleKey != nil, !meal.aiPending {
+            // PC から入れた食事も、場所があってお店が決まらないときは Google で探す（本人「ほんとに Google 使ってる？」2026-11-25）
+            if meal.place == nil || meal.confidence < 0.6, KeyStore.googleKey != nil, !meal.aiPending {
                 status = "Google でも探しています"
                 var extra: [PlaceCandidate] = []
                 if let seen = verdict?.name_seen, !seen.isEmpty {
@@ -414,8 +415,8 @@ final class Scanner {
                     let core = Matcher.coreName(verdict?.name_seen ?? "")
                     if !core.isEmpty, let named = fresh.first(where: { Matcher.similarity(Matcher.coreName($0.name), core) >= 0.6 }) {
                         setPlace(named, on: meal, confidence: 0.8, reason: "写真の店名「\(core)」を Google で見つけました", context: context)
-                    } else if ClaudeLink.isReady, Spend.canSpend, !foodJPEGs.isEmpty {
-                        // 増えた候補で、AI にもう一度選んでもらう
+                    } else if preset == nil, ClaudeLink.isReady, Spend.canSpend, !foodJPEGs.isEmpty {
+                        // 増えた候補で、AI にもう一度選んでもらう（PC から入れた食事では AI を呼ばない）
                         let again = ClaudeVision.prompt(date: first.date, area: meal.area, candidates: merged, lines: lines,
                                                         foodCount: foodJPEGs.count, clueCount: clueJPEGs.count, event: event,
                                                         receipt: receipt, indoor: indoor, stay: stay)
