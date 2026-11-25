@@ -110,6 +110,25 @@ extension Matcher {
         return -1
     }
 
+    /// 1 つの料理しか出さないお店（ここで食べたら、ほぼこのジャンル）
+    static let singlePurposeGenres: Set<String> = ["ラーメン", "つけ麺", "そば・うどん", "寿司", "焼肉", "焼き鳥", "カレー", "お好み焼き"]
+
+    /// 決まったジャンルを、料理の名前・お店とくい違わないように直す（2026-11-25 精度の施策）。
+    /// 1. 最初の料理の名前からジャンルが分かり、別の系統なら、料理の名前に合わせる（「味玉醤油ラーメン」なのに「丼」など）
+    /// 2. 自信の高いお店が 1 つの料理しか出さないお店で、写真のジャンルが別の系統なら、お店に合わせる（ラーメン屋で「丼」など）
+    /// 甘いもの・飲み物（カフェ・スイーツ・バー）は、どのお店でも食べるので直さない
+    static func consistentGenre(_ genre: String, dishes: [String], shop: PlaceCandidate?, shopConfidence: Double) -> String {
+        guard !["カフェ", "スイーツ", "バー"].contains(genre) else { return genre }
+        func sameFamily(_ a: String, _ b: String) -> Bool { a == b || genreFamilies.contains { $0.contains(a) && $0.contains(b) } }
+        if let first = dishes.first, let g = self.genre(fromText: first), !["カフェ", "スイーツ", "バー"].contains(g) {
+            return sameFamily(g, genre) ? genre : g
+        }
+        if let shop, shopConfidence >= 0.85, let g = candidateGenre(shop), singlePurposeGenres.contains(g), !sameFamily(g, genre) {
+            return g
+        }
+        return genre
+    }
+
     /// ジャンルが合うお店を上へ、はっきり合わないお店を下へ
     static func applyGenre(_ ranked: [PlaceCandidate], photoGenre: String?) -> [PlaceCandidate] {
         guard photoGenre != nil else { return ranked }

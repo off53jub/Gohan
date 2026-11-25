@@ -59,6 +59,9 @@ enum Matcher {
     /// 同じ食事とみなす写真の間（秒）と距離（m）
     static let mealGap: TimeInterval = 40 * 60
     static let mealDistance = 250.0
+    /// 同じ場所（100m 以内）なら、間が 90 分あいても同じ食事（飲み会・コースが 2 つに割れないように。2026-11-25）
+    static let longMealGap: TimeInterval = 90 * 60
+    static let sameSpotDistance = 100.0
     /// 撮ってからこの長さは待つ（食べている途中で区切らないため）
     static let holdBack: TimeInterval = 60 * 60
     /// この自信より低ければ「たぶん」の印を付ける
@@ -71,7 +74,7 @@ enum Matcher {
         var groups: [[SeenPhoto]] = []
         for photo in sorted {
             if var last = groups.last, let tail = last.last,
-               photo.date.timeIntervalSince(tail.date) <= mealGap,
+               photo.date.timeIntervalSince(tail.date) <= (sameSpot(photo, last) ? longMealGap : mealGap),
                closeEnough(photo, last),
                !courseChanged(from: tail, to: photo) {
                 last.append(photo)
@@ -111,6 +114,28 @@ enum Matcher {
             p.accuracy = max(best.accuracy ?? 50, 100)
             return p
         }
+    }
+
+    /// 写真にも食事にも位置があり、100m 以内か（位置の分からないときは「同じ場所」とみなさない）
+    private static func sameSpot(_ photo: SeenPhoto, _ group: [SeenPhoto]) -> Bool {
+        guard let lat = photo.latitude, let lon = photo.longitude, let center = center(of: group) else { return false }
+        return distance(lat, lon, center.latitude, center.longitude) <= sameSpotDistance
+    }
+
+    /// 食事のあいだに同じ場所で撮った、料理ではない写真（人・お店の中・外観など。思い出として食事に入れる。2026-11-25）
+    /// 料理の写真がない時間・ほかの場所の写真・SNS から保存した画像は入れない
+    static func companionPhotos(for meal: [SeenPhoto], among all: [SeenPhoto], limit: Int = 12) -> [SeenPhoto] {
+        guard let first = meal.first?.date, let last = meal.last?.date else { return [] }
+        let ids = Set(meal.map(\.id))
+        let spot = center(of: meal)
+        let window = (first.addingTimeInterval(-5 * 60))...(last.addingTimeInterval(5 * 60))
+        let hits = all.filter { photo in
+            guard !ids.contains(photo.id), !photo.noCamera, window.contains(photo.date) else { return false }
+            guard let spot else { return true }
+            guard let lat = photo.latitude, let lon = photo.longitude else { return true }
+            return distance(lat, lon, spot.latitude, spot.longitude) <= 150
+        }
+        return Array(hits.sorted { $0.date < $1.date }.prefix(limit))
     }
 
     private static func closeEnough(_ photo: SeenPhoto, _ group: [SeenPhoto]) -> Bool {

@@ -250,6 +250,7 @@ struct AdvancedSettingsView: View {
     @State private var light = AISettings.lightForEasy
     @State private var backfillCharging = ScanSettings.backfillOnlyCharging
     @State private var videos = ScanSettings.videos
+    @State private var companions = ScanSettings.companions
     @State private var confirmReset = false
     @State private var giving = false
     @State private var webCheck = AISettings.webCheck
@@ -327,6 +328,8 @@ struct AdvancedSettingsView: View {
                 Toggle("古い写真は充電中・Wi-Fi のときに読む", isOn: $backfillCharging)
                     .onChange(of: backfillCharging) { _, new in ScanSettings.backfillOnlyCharging = new }
                 Toggle("動画からも1コマ拾う", isOn: $videos).onChange(of: videos) { _, new in ScanSettings.videos = new }
+                Toggle("食事中に撮ったほかの写真（人・お店の中）も入れる", isOn: $companions)
+                    .onChange(of: companions) { _, new in ScanSettings.companions = new }
                 Toggle("迷ったときだけ、AI にネットで確かめてもらう", isOn: $webCheck).onChange(of: webCheck) { _, new in AISettings.webCheck = new }
             } header: {
                 Text("送り方・読み方")

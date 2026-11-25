@@ -264,8 +264,10 @@ def cmd_group(args) -> None:
     groups: list[list[dict]] = []
     for p in food:
         last = groups[-1][-1] if groups else None
-        if last and (when(p) - when(last)) <= timedelta(minutes=MEAL_GAP_MIN):
-            d = distance_m(p, last)
+        d = distance_m(p, last) if last else None
+        # アプリと同じ: 同じ場所（100m 以内）なら 90 分あいても同じ食事（飲み会・コース。2026-11-25）
+        gap = 90 if d is not None and d <= 100 else MEAL_GAP_MIN
+        if last and (when(p) - when(last)) <= timedelta(minutes=gap):
             if d is None or d <= MEAL_GAP_M:
                 groups[-1].append(p)
                 continue

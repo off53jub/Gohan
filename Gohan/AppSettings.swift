@@ -42,6 +42,12 @@ enum ScanSettings {
         set { d.set(newValue, forKey: "scan.videos") }
     }
 
+    /// 食事のあいだに同じ場所で撮った、料理ではない写真（人・お店の中）も食事に入れる（2026-11-25）
+    static var companions: Bool {
+        get { d.object(forKey: "scan.companions") as? Bool ?? true }
+        set { d.set(newValue, forKey: "scan.companions") }
+    }
+
     /// 飲み物だけ・おやつの記録も一覧に並べる（便26）
     static var showSmall: Bool {
         get { d.object(forKey: "show.small") as? Bool ?? true }
