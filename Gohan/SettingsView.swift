@@ -251,6 +251,7 @@ struct AdvancedSettingsView: View {
     @State private var backfillCharging = ScanSettings.backfillOnlyCharging
     @State private var videos = ScanSettings.videos
     @State private var companions = ScanSettings.companions
+    @State private var imageSearch = AISettings.imageSearch
     @State private var confirmReset = false
     @State private var giving = false
     @State private var webCheck = AISettings.webCheck
@@ -259,6 +260,21 @@ struct AdvancedSettingsView: View {
     @State private var hasGoogle = KeyStore.googleKey != nil
     @State private var hasHotpepper = KeyStore.hotpepperKey != nil
     @State private var logURL: URL?
+
+    /// 「お店の候補を増やす」の下の説明と、今月の回数・最後の失敗
+    private var shopSourcesFooter: String {
+        var lines = ["Apple のマップに載っていないお店も候補に入ります。鍵は自分で取って、この iPhone にだけ置きます。写真の位置（だいたいの場所）がそれぞれの会社に送られます。"]
+        let calls = "今月の呼び出し: Google \(Metrics.value("googleCalls")) 回（失敗 \(Metrics.value("googleErrors")) 回）"
+        let others = "ホットペッパー \(Metrics.value("hotpepperCalls")) 回・ネットで確かめた \(Metrics.value("webChecks")) 回"
+        lines.append(calls + "・" + others)
+        let search = "画像検索 \(Metrics.value("imageSearches"))/\(ImageSearch.monthlyCap) 回"
+        let shops = "お店の写真を探した \(Metrics.value("lookupShops"))/\(LookAlike.monthlyShopLookups) 軒"
+        let photos = "取った写真 \(Metrics.value("googlePhotos"))/\(LookAlike.monthlyPhotoFetches) 枚・見比べた \(Metrics.value("lookAlikes")) 回"
+        lines.append("迷ったとき: " + search + "・" + shops + "・" + photos)
+        if let p = GooglePlaces.lastProblem { lines.append("Google の最後の失敗: " + p) }
+        if let p = ImageSearch.lastProblem { lines.append("画像検索の最後の失敗: " + p) }
+        return lines.joined(separator: "\n")
+    }
 
     var body: some View {
         Form {
@@ -331,6 +347,8 @@ struct AdvancedSettingsView: View {
                 Toggle("食事中に撮ったほかの写真（人・お店の中）も入れる", isOn: $companions)
                     .onChange(of: companions) { _, new in ScanSettings.companions = new }
                 Toggle("迷ったときだけ、AI にネットで確かめてもらう", isOn: $webCheck).onChange(of: webCheck) { _, new in AISettings.webCheck = new }
+                Toggle("迷ったときだけ、料理の写真で画像検索（Google・月 \(ImageSearch.monthlyCap) 回まで）", isOn: $imageSearch)
+                    .onChange(of: imageSearch) { _, new in AISettings.imageSearch = new }
             } header: {
                 Text("送り方・読み方")
             } footer: {
@@ -365,7 +383,7 @@ struct AdvancedSettingsView: View {
             } header: {
                 Text("お店の候補を増やす")
             } footer: {
-                Text("Apple のマップに載っていないお店も候補に入ります。鍵は自分で取って、この iPhone にだけ置きます。写真の位置（だいたいの場所）がそれぞれの会社に送られます。今月の呼び出し: Google \(Metrics.value("googleCalls")) 回（失敗 \(Metrics.value("googleErrors")) 回）・ホットペッパー \(Metrics.value("hotpepperCalls")) 回・ネットで確かめた \(Metrics.value("webChecks")) 回" + (GooglePlaces.lastProblem.map { "\nGoogle の最後の失敗: \($0)" } ?? ""))
+                Text(shopSourcesFooter)
             }
             Section {
                 NavigationLink("試験（当たり方を比べる）") { EvalView() }

@@ -212,6 +212,8 @@ struct PlaceCandidate: Codable, Hashable, Identifiable {
     var closedDays: String = ""
     /// お店の紹介写真（ホットペッパーの画像の URL、または Google の写真の名前「places/…」。精度4）
     var photo: String = ""
+    /// 2 枚目からの紹介写真（Google の写真の名前。料理の写真を選んで見比べるため。2026-11-25）
+    var morePhotos: [String] = []
     /// 写真を撮った時刻に閉まっていたはず（その場で付ける印）
     var closedThen: Bool = false
 
@@ -249,6 +251,7 @@ struct PlaceCandidate: Codable, Hashable, Identifiable {
         hours = try c.decodeIfPresent(String.self, forKey: .hours) ?? ""
         closedDays = try c.decodeIfPresent(String.self, forKey: .closedDays) ?? ""
         photo = try c.decodeIfPresent(String.self, forKey: .photo) ?? ""
+        morePhotos = try c.decodeIfPresent([String].self, forKey: .morePhotos) ?? []
         closedThen = try c.decodeIfPresent(Bool.self, forKey: .closedThen) ?? false
     }
 
