@@ -455,7 +455,11 @@ def cmd_nearby(args) -> None:
 # ---------------------------------------------------------------- 5. pack
 
 def jpeg_b64(path: str, side: int) -> str:
-    im = open_image(path, side)
+    try:
+        im = open_image(path, side)
+    except Exception as e:  # 壊れた写真は飛ばす
+        print(f"  読めません: {path} ({e})", file=sys.stderr)
+        return ""
     buf = io.BytesIO()
     im.save(buf, format="JPEG", quality=75)
     return base64.b64encode(buf.getvalue()).decode("ascii")
@@ -509,6 +513,11 @@ def cmd_pack(args) -> None:
 
 def pack_file(args, work: Path, todo, photos, by_meal, verdicts, part: int) -> None:
     out_meals = []
+    # 写真を先にまとめて同時に読む（pCloud は 1 枚ずつだと遅い）
+    wanted = [p for m in todo if verdicts[m["id"]]["is_meal"]
+              for p in spread([photos[i] for i in m["food"] if i in photos], args.max_photos)]
+    with ThreadPoolExecutor(max_workers=16) as pool:
+        encoded = dict(zip([p["path"] for p in wanted], pool.map(lambda p: jpeg_b64(p["path"], args.side), wanted)))
     for m in todo:
         v = verdicts[m["id"]]
         food = [photos[i] for i in m["food"] if i in photos]
@@ -523,7 +532,8 @@ def pack_file(args, work: Path, todo, photos, by_meal, verdicts, part: int) -> N
             "longitude": located[0]["lon"] if located else None,
             "accuracy": min(acc) if acc else None,
             "verdict": verdict, "lines": v.get("lines", []),
-            "photos": [{"date": p["date"], "jpeg": jpeg_b64(p["path"], args.side)} for p in spread([p for p in food], args.max_photos)]
+            "photos": [{"date": p["date"], "jpeg": encoded[p["path"]]}
+                       for p in spread([p for p in food], args.max_photos) if encoded.get(p["path"])]
             if v["is_meal"] else [],
         })
         place = None
