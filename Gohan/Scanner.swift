@@ -329,6 +329,7 @@ final class Scanner {
         let ready = preset == nil && ClaudeLink.isReady && Spend.canSpend && !foodJPEGs.isEmpty
         let known = meal.spot.isEmpty ? Matcher.knownPlace(ranked) : nil
         var verdict: MealVerdict?
+        var askedPrompt: String?
         if var preset {
             // PC で決めてきた料理・ジャンル。お店は PC の答えが候補にあればそれ、無ければ端末の点数で選ぶ
             var (pick, confidence) = Matcher.decideOnDevice(ranked)
@@ -357,6 +358,7 @@ final class Scanner {
             let prompt = ClaudeVision.prompt(date: first.date, area: meal.area, candidates: known.map { [$0] } ?? ranked, lines: lines,
                                              foodCount: foodJPEGs.count, clueCount: clueJPEGs.count, event: event, receipt: receipt,
                                              knownPlace: known.map { "\($0.name)（\($0.address)）" }, indoor: indoor, stay: stay)
+            askedPrompt = prompt
             if old, AISettings.batchOld, known == nil, meal.spot.isEmpty {
                 // 古い写真は急がないので、まとめ処理で半額に（便13）。答えが来るまでは端末で決めておく
                 BatchQueue.enqueue(mealID: meal.id, body: ClaudeVision.body(food: foodJPEGs, clues: Array(clueJPEGs), prompt: prompt, light: false))
@@ -379,6 +381,26 @@ final class Scanner {
             if verdict == nil { meal.source = "known" }
         } else {
             apply(verdict, to: meal, ranked: ranked, forcedPick: nil, context: context, labels: labels, lines: lines + receipt)
+            // 迷ったときだけ、いちばん強いモデルに同じ写真と候補で聞き直す（本人「迷ったときだけ上のモデル」2026-11-26）
+            if let prompt = askedPrompt, verdict != nil, meal.source.hasPrefix("claude"), meal.eatenOut, !meal.hidden,
+               meal.confidence < 0.6, AISettings.escalate, ClaudeLink.isReady, Spend.canSpend {
+                status = "よく見直しています"
+                if let second = try? await ClaudeVision.judgeStrong(food: foodJPEGs, clues: Array(clueJPEGs), prompt: prompt) {
+                    Metrics.count("escalations")
+                    let before = meal.confidence
+                    if second.is_meal, second.place_index >= 0, second.place_confidence > before {
+                        apply(second, to: meal, ranked: ranked, forcedPick: nil, context: context, labels: labels, lines: lines + receipt)
+                        verdict = second
+                        meal.source += "+strong"
+                    } else if second.is_meal, !meal.genreByHand {
+                        // お店は決まらなくても、料理とジャンルは強いモデルの答えにする
+                        meal.genre = Matcher.consistentGenre(second.genre, dishes: second.dishes, shop: nil, shopConfidence: 0)
+                        meal.dishes = Matcher.canonicalDishes(second.dishes.filter { !$0.isEmpty }, book: dishBook)
+                        meal.summary = second.summary
+                        if !second.name_seen.isEmpty { verdict = second }
+                    }
+                }
+            }
         }
 
         if let spot, meal.eatenOut, meal.spot.isEmpty, known == nil, !meal.hidden {
@@ -484,6 +506,8 @@ final class Scanner {
                 }
             }
         }
+        // まだ迷っていれば、一緒に食べた相手（ふたり帖）の答えで補う（AI も地図も呼ばない。2026-11-26）
+        PartnerStore.shared.fillFromPartner(meal, context: context)
         context.insert(meal)
         return meal.hidden ? nil : meal
     }

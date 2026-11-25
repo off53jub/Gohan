@@ -26,6 +26,46 @@ struct PartnerMeal: Codable, Identifiable, Hashable {
     var wantAgain: Bool
     /// 小さな写真（320px の JPEG。相手の端末には元の写真が無いので）
     var thumbnail: Data?
+    // 2026-11-26: 相手の答えで自分の記録を補うために足した（前の版のファイルには無いので省略可）
+    var placeLatitude: Double? = nil
+    var placeLongitude: Double? = nil
+    var placeCategory: String? = nil
+    /// お店の自信（0〜1。自分で選んだら 1）
+    var confidence: Double? = nil
+    /// ジャンルを手で直した
+    var genreByHand: Bool? = nil
+}
+
+/// 相手の答えで、自分の食事を補う（同じ時間・同じ場所で食べた食事だけ。2026-11-26）
+enum PartnerFix {
+    struct Change: Equatable {
+        var place: PlaceCandidate?
+        var placeConfidence: Double = 0
+        var genre: String?
+    }
+
+    /// 相手のお店を使うのに要る自信（これ以上で、自分の自信より高いとき）
+    static let sureEnough = 0.8
+
+    /// 何を写すか（写さないなら nil）。自分で選んだお店・自分で直したジャンルは変えない
+    static func change(mine: (confidence: Double, hasPlace: Bool, placeKey: String?, genre: String, genreByHand: Bool,
+                              latitude: Double, longitude: Double),
+                       theirs p: PartnerMeal) -> Change? {
+        var change = Change()
+        let theirConfidence = p.confidence ?? 0
+        if let name = p.placeName, let lat = p.placeLatitude, let lon = p.placeLongitude,
+           theirConfidence >= sureEnough, mine.confidence < 1, theirConfidence > mine.confidence,
+           p.placeKey != mine.placeKey {
+            change.place = PlaceCandidate(name: name, address: p.address ?? "", category: p.placeCategory ?? "",
+                                          latitude: lat, longitude: lon,
+                                          distance: Matcher.distance(mine.latitude, mine.longitude, lat, lon))
+            change.placeConfidence = min(0.9, theirConfidence)
+        }
+        if p.genreByHand == true, !mine.genreByHand, p.genre != mine.genre, p.genre != "その他" {
+            change.genre = p.genre
+        }
+        return change.place == nil && change.genre == nil ? nil : change
+    }
 }
 
 struct PartnerBook: Codable {
@@ -73,9 +113,35 @@ final class PartnerStore {
         let meals = (try? context.fetch(FetchDescriptor<Meal>())) ?? []
         for meal in meals {
             if let r = incoming.reactions[meal.id.uuidString] { meal.reactions = r }
+            fillFromPartner(meal, context: context)
         }
         try? context.save()
         return incoming.meals.count
+    }
+
+    /// 一緒に食べた相手の食事があれば、相手の答えで自分の食事を補う（お店・手で直したジャンル）。直したら true
+    @discardableResult
+    func fillFromPartner(_ meal: Meal, context: ModelContext) -> Bool {
+        guard !meal.hidden, let lat = meal.latitude, let lon = meal.longitude, let theirs = together(with: meal),
+              theirs.latitude != nil else { return false }
+        let mine = (confidence: meal.place == nil ? 0 : meal.confidence, hasPlace: meal.place != nil, placeKey: meal.place?.key,
+                    genre: meal.genre, genreByHand: meal.genreByHand, latitude: lat, longitude: lon)
+        guard let change = PartnerFix.change(mine: mine, theirs: theirs) else { return false }
+        let name = book?.name ?? "相手"
+        if let shop = change.place {
+            meal.place = PlaceBook.place(for: shop, date: meal.date, context: context)
+            meal.eatenOut = true
+            meal.spot = ""
+            meal.confidence = change.placeConfidence
+            meal.needsCheck = change.placeConfidence < Matcher.sureLine
+            meal.reason = "\(name)の記録と同じお店にしました"
+            meal.source += "+partner"
+        }
+        if let genre = change.genre {
+            meal.genre = genre
+        }
+        Metrics.count("partnerFixes")
+        return true
     }
 
     func react(_ mealID: UUID, _ text: String) {
@@ -97,7 +163,10 @@ final class PartnerStore {
             }
             out.append(PartnerMeal(id: m.id, date: m.date, latitude: m.latitude, longitude: m.longitude, title: m.title,
                                    placeKey: m.place?.key, placeName: m.place?.name, address: m.place?.address, genre: m.genre,
-                                   dishes: m.dishes, note: m.note, wantAgain: m.place?.wantAgain ?? false, thumbnail: thumb))
+                                   dishes: m.dishes, note: m.note, wantAgain: m.place?.wantAgain ?? false, thumbnail: thumb,
+                                   placeLatitude: m.place?.latitude, placeLongitude: m.place?.longitude,
+                                   placeCategory: m.place?.category, confidence: m.place == nil ? nil : m.confidence,
+                                   genreByHand: m.genreByHand))
         }
         let name = Self.myName.isEmpty ? "ふたり帖" : Self.myName
         let file = PartnerBook(name: name, meals: out, reactions: myReactions)

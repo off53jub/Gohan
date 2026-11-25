@@ -71,6 +71,8 @@ enum AIModel {
     static var main: String { forced ?? "claude-sonnet-5-5" }
     /// かんたんな写真だけに使う（便12。本人が 2026-11-23 に「全部作って」で認めた）
     static var light: String { forced ?? "claude-haiku-5-5" }
+    /// 迷ったときだけ聞き直す、いちばん見る力の強いモデル（本人「迷ったときだけ上のモデル」2026-11-26）
+    static var strong: String { forced ?? "claude-opus-5-5" }
 
     /// 答えたモデルの名前で値段を引く（断られて別のモデルに回ったときも正しく数える）
     static func price(_ model: String) -> (input: Double, output: Double) {
@@ -348,6 +350,23 @@ enum ClaudeVision {
             return try await sendJudge(params, beta: "server-side-fallback-2026-07-01")
         } catch ClaudeError.http(let code, _) where code == 400 {
             // 予備のモデルの指定が受け付けられないときは、それを外して1回だけやり直す
+            params.removeValue(forKey: "fallbacks")
+            return try await sendJudge(params, beta: nil)
+        }
+    }
+
+    /// 迷ったときの聞き直し（強いモデル・よく考えてもらう）。答えの形はふだんと同じ
+    static func judgeStrong(food: [Data], clues: [Data], prompt: String) async throws -> MealVerdict {
+        guard ClaudeLink.isReady else { throw ClaudeError.noKey }
+        guard Spend.canSpend else { throw ClaudeError.capped }
+        var params = Self.body(food: food, clues: clues, prompt: prompt, light: false)
+        params["model"] = AIModel.strong
+        params["output_config"] = ["effort": "high", "format": ["type": "json_schema", "schema": schema]]
+        params["max_tokens"] = 8192
+        params["fallbacks"] = "default"
+        do {
+            return try await sendJudge(params, beta: "server-side-fallback-2026-07-01")
+        } catch ClaudeError.http(let code, _) where code == 400 {
             params.removeValue(forKey: "fallbacks")
             return try await sendJudge(params, beta: nil)
         }
