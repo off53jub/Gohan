@@ -118,6 +118,7 @@ struct MealDetailView: View {
                         let old = meal.genre
                         guard old != g else { return }
                         meal.genre = g
+                        meal.genreByHand = true
                         Metrics.count("genreEdits")
                         // 直したジャンルを覚える（写真の判定の名前 → ジャンル）と、外れ方の記録
                         GenreLearn.record(label: meal.visionLabel, genre: g)
@@ -543,6 +544,7 @@ struct CandidatePicker: View {
     @State private var results: [PlaceCandidate] = []
     @State private var searching = false
     @State private var refreshing = false
+    @State private var googleDone = false
     @State private var others: [Meal] = []
     @State private var chosen: PlaceCandidate?
 
@@ -569,13 +571,17 @@ struct CandidatePicker: View {
                     if refreshing {
                         HStack(spacing: 8) {
                             ProgressView()
-                            Text("近くのお店を探しています（Apple・ホットペッパー・Google）").font(.callout).foregroundStyle(Ink.hai)
+                            Text("近くのお店を探しています").font(.callout).foregroundStyle(Ink.hai)
                         }
                     } else if meal.candidates.isEmpty && results.isEmpty {
                         Text(meal.latitude == nil
                              ? "この食事の写真には場所の記録がないので、近くのお店を出せません。上の欄にお店の名前を入れて探してください。"
                              : "候補がありません。上の欄にお店の名前を入れて探してください。")
                             .font(.callout).foregroundStyle(Ink.hai)
+                    }
+                    if meal.latitude != nil, KeyStore.googleKey != nil, !googleDone, !refreshing {
+                        Button("見つからないときは Google でも探す") { Task { await refreshNearby(google: true) } }
+                            .buttonStyle(InkButtonStyle(filled: false))
                     }
                     Button("お店ではない（家・持ち帰りなど）") { notShop() }
                         .buttonStyle(InkButtonStyle(filled: false))
@@ -732,20 +738,21 @@ struct CandidatePicker: View {
         // 写真の位置が無ければ、東京の真ん中から広く探す
         let lat = meal.latitude ?? 35.681, lon = meal.longitude ?? 139.767
         let radius = meal.latitude == nil ? 50_000.0 : 3_000.0
-        // 自分で探すときは Apple・ホットペッパー・Google を全部合わせる（Apple に無いお店も出るように。2026-11-25）
-        async let local = PlaceFinder.searchAll(text, latitude: lat, longitude: lon, radius: radius)
-        async let google = GooglePlaces.text(text, latitude: lat, longitude: lon, radius: radius)
-        results = PlaceFinder.merge([await local, await google])
+        // Google は Apple・ホットペッパーで見つからないときだけ（使いすぎると料金がかかる。本人「必要に応じて」2026-11-25）
+        results = await PlaceFinder.searchWithFallback(text, latitude: lat, longitude: lon, radius: radius)
     }
 
-    /// 開いたとき、候補が少なければ近くのお店を探し直す（PC から入れた食事・地図の検索が混んで空だった食事のため）
-    private func refreshNearby() async {
-        guard let lat = meal.latitude, let lon = meal.longitude, meal.candidates.count < 5 else { return }
+    /// 開いたとき、候補が少なければ近くのお店を探し直す（PC から入れた食事・地図の検索が混んで空だった食事のため）。
+    /// ふだんは Apple・ホットペッパーだけ。Google は「Google でも探す」を押したときだけ
+    private func refreshNearby(google useGoogle: Bool = false) async {
+        guard let lat = meal.latitude, let lon = meal.longitude, useGoogle || meal.candidates.count < 5 else { return }
         refreshing = true
         defer { refreshing = false }
-        async let local = PlaceFinder.nearbyAll(latitude: lat, longitude: lon, radius: 300)
-        async let google = GooglePlaces.nearby(latitude: lat, longitude: lon, radius: 300)
-        let merged = PlaceFinder.merge([meal.candidates, await local, await google])
+        let found = useGoogle
+            ? await GooglePlaces.nearby(latitude: lat, longitude: lon, radius: 300)
+            : await PlaceFinder.nearbyAll(latitude: lat, longitude: lon, radius: 300)
+        if useGoogle { googleDone = true }
+        let merged = PlaceFinder.merge([meal.candidates, found])
         guard merged.count > meal.candidates.count else { return }
         let ranked = Matcher.applyGenre(Matcher.rank(merged, lines: [], dishLabel: meal.visionLabel), photoGenre: meal.genre)
         meal.candidates = Array(ranked.prefix(20))
