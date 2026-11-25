@@ -23,11 +23,16 @@
    - candidates から選んだときは、candidates の name を一字一句そのまま書く（場所の照合に使う）。
    - place_confidence: 0〜1。店名が写真で読めた・料理とお店がはっきり合う → 0.8 以上。迷う → 0.5 未満。当てずっぽうなら place_name を "" に。
    - place_reason: 30 字くらいの理由（例: 看板の「こもれび」と場所が合った）。
+10. unsure: 食事かどうか・ジャンルに自信が無い（暗い・ぼやけている・何の料理か分からない）なら true。true の食事は取り込まない。自信があれば false。
+
+`meals.json` が別のフォルダ（例 `D:\GohanImport\toshu`）にあるときは、そのフォルダの `meals.json`・`meals\<id>.jpg` を読む。
+「WebSearch は使わない」と頼まれたら、candidates と写真だけで決める。
 
 ## 書き出し
 指定のファイルに、1 つの JSON オブジェクトで（UTF-8、Write で）:
 ```json
 {"m00001": {"is_meal": true, "eaten_out": true, "genre": "ラーメン", "dishes": ["スタミナラーメン"], "summary": "…",
-            "kind": "meal", "name_seen": "", "lines": [], "place_name": "…", "place_confidence": 0.7, "place_reason": "…"}}
+            "kind": "meal", "name_seen": "", "lines": [], "place_name": "…", "place_confidence": 0.7, "place_reason": "…",
+            "unsure": false}}
 ```
 報告は短く: 書いた件数・お店を決めた件数・自信の低いもの（id と理由、10 件まで）。
