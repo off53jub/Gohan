@@ -194,7 +194,7 @@ struct MealDetailView: View {
     private var actions: some View {
         VStack(alignment: .leading, spacing: 2) {
             linkButton("お店がちがうとき") { picking = true }
-            linkButton("写真を外す・足す") { editingPhotos = true }
+            linkButton("写真の順番・外す・足す") { editingPhotos = true }
             if meal.photoIDs.count >= 2 { linkButton("食事を分ける") { splitting = true } }
             if previousMeal != nil { linkButton("前の食事とくっつける") { mergeWithPrevious() } }
             // 写真アプリの特定の写真は開けないので、写真アプリを開く（日時で探せる。便39）
@@ -411,13 +411,25 @@ struct PhotoEditor: View {
                     ForEach(meal.photoIDs, id: \.self) { id in
                         HStack {
                             PhotoThumb(id: id, side: 64)
+                            if id == meal.photoIDs.first {
+                                Text("表紙").font(.caption).foregroundStyle(Ink.ai)
+                            }
                             Spacer()
+                            if id != meal.photoIDs.first {
+                                Button("表紙にする") { makeCover(id) }
+                                    .buttonStyle(.borderless)
+                            }
                             Button("外す", role: .destructive) { remove(id) }
+                                .buttonStyle(.borderless)
                                 .disabled(meal.photoIDs.count <= 1)
                         }
                     }
+                    .onMove { from, to in
+                        meal.photoIDs.move(fromOffsets: from, toOffset: to)
+                        try? context.save()
+                    }
                 } footer: {
-                    Text("外した写真は写真アプリには残ります。")
+                    Text("右の三本線をつかんで動かすと、順番を変えられます。いちばん上の写真が表紙（一覧に出る写真）になります。外した写真は写真アプリには残ります。")
                 }
                 Section {
                     PhotosPicker(selection: $picked, matching: .any(of: [.images, .videos]), photoLibrary: .shared()) {
@@ -425,6 +437,7 @@ struct PhotoEditor: View {
                     }
                 }
             }
+            .environment(\.editMode, .constant(.active))   // 並べ替えのつまみを常に出す
             .navigationTitle("写真")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("閉じる") { dismiss() } } }
@@ -435,6 +448,12 @@ struct PhotoEditor: View {
                 try? context.save()
             }
         }
+    }
+
+    private func makeCover(_ id: String) {
+        meal.photoIDs.removeAll { $0 == id }
+        meal.photoIDs.insert(id, at: 0)
+        try? context.save()
     }
 
     private func remove(_ id: String) {
@@ -523,6 +542,7 @@ struct CandidatePicker: View {
     @State private var query = ""
     @State private var results: [PlaceCandidate] = []
     @State private var searching = false
+    @State private var refreshing = false
     @State private var others: [Meal] = []
     @State private var chosen: PlaceCandidate?
 
@@ -546,8 +566,16 @@ struct CandidatePicker: View {
                         }
                         .font(.subheadline).tint(Ink.ai)
                     }
-                    if meal.candidates.isEmpty && results.isEmpty {
-                        Text("候補がありません。上の欄にお店の名前を入れて探してください。").font(.callout).foregroundStyle(Ink.hai)
+                    if refreshing {
+                        HStack(spacing: 8) {
+                            ProgressView()
+                            Text("近くのお店を探しています（Apple・ホットペッパー・Google）").font(.callout).foregroundStyle(Ink.hai)
+                        }
+                    } else if meal.candidates.isEmpty && results.isEmpty {
+                        Text(meal.latitude == nil
+                             ? "この食事の写真には場所の記録がないので、近くのお店を出せません。上の欄にお店の名前を入れて探してください。"
+                             : "候補がありません。上の欄にお店の名前を入れて探してください。")
+                            .font(.callout).foregroundStyle(Ink.hai)
                     }
                     Button("お店ではない（家・持ち帰りなど）") { notShop() }
                         .buttonStyle(InkButtonStyle(filled: false))
@@ -561,6 +589,7 @@ struct CandidatePicker: View {
             .searchable(text: $query, prompt: "お店の名前で探す")
             .onSubmit(of: .search) { Task { await search() } }
             .overlay { if searching { ProgressView() } }
+            .task { await refreshNearby() }
             .navigationTitle("お店を選ぶ")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("閉じる") { dismiss() } } }
@@ -703,6 +732,23 @@ struct CandidatePicker: View {
         // 写真の位置が無ければ、東京の真ん中から広く探す
         let lat = meal.latitude ?? 35.681, lon = meal.longitude ?? 139.767
         let radius = meal.latitude == nil ? 50_000.0 : 3_000.0
-        results = await PlaceFinder.searchWithFallback(text, latitude: lat, longitude: lon, radius: radius)
+        // 自分で探すときは Apple・ホットペッパー・Google を全部合わせる（Apple に無いお店も出るように。2026-11-25）
+        async let local = PlaceFinder.searchAll(text, latitude: lat, longitude: lon, radius: radius)
+        async let google = GooglePlaces.text(text, latitude: lat, longitude: lon, radius: radius)
+        results = PlaceFinder.merge([await local, await google])
+    }
+
+    /// 開いたとき、候補が少なければ近くのお店を探し直す（PC から入れた食事・地図の検索が混んで空だった食事のため）
+    private func refreshNearby() async {
+        guard let lat = meal.latitude, let lon = meal.longitude, meal.candidates.count < 5 else { return }
+        refreshing = true
+        defer { refreshing = false }
+        async let local = PlaceFinder.nearbyAll(latitude: lat, longitude: lon, radius: 300)
+        async let google = GooglePlaces.nearby(latitude: lat, longitude: lon, radius: 300)
+        let merged = PlaceFinder.merge([meal.candidates, await local, await google])
+        guard merged.count > meal.candidates.count else { return }
+        let ranked = Matcher.applyGenre(Matcher.rank(merged, lines: [], dishLabel: meal.visionLabel), photoGenre: meal.genre)
+        meal.candidates = Array(ranked.prefix(20))
+        try? context.save()
     }
 }

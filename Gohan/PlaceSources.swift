@@ -87,10 +87,29 @@ enum GooglePlaces {
         // 鍵を「iOS アプリ」で制限したときに要る印
         request.setValue(Bundle.main.bundleIdentifier ?? "com.off53jub.gohan", forHTTPHeaderField: "X-Ios-Bundle-Identifier")
         request.httpBody = data
-        guard let result = try? await URLSession.shared.data(for: request),
-              (result.1 as? HTTPURLResponse)?.statusCode == 200 else { return [] }
+        guard let result = try? await URLSession.shared.data(for: request) else {
+            note(problem: "つながりませんでした")
+            return []
+        }
+        let status = (result.1 as? HTTPURLResponse)?.statusCode ?? 0
+        guard status == 200 else {
+            // 失敗が見えないと「本当に Google を使っているのか」が分からないので、理由を残す（作る人のメニューで見る）
+            let message = ((try? JSONSerialization.jsonObject(with: result.0)) as? [String: Any])
+                .flatMap { ($0["error"] as? [String: Any])?["message"] as? String } ?? ""
+            note(problem: "HTTP \(status) \(message.prefix(120))")
+            return []
+        }
         Metrics.count("googleCalls")
         return parse(result.0, latitude: latitude, longitude: longitude)
+    }
+
+    /// いちばん最近の失敗（日時と理由）。無ければ nil
+    static var lastProblem: String? { UserDefaults.standard.string(forKey: "googleLastProblem") }
+
+    private static func note(problem: String) {
+        Metrics.count("googleErrors")
+        let stamp = Date().formatted(.dateTime.month().day().hour().minute())
+        UserDefaults.standard.set("\(stamp) \(problem)", forKey: "googleLastProblem")
     }
 
     static func parse(_ data: Data, latitude: Double, longitude: Double) -> [PlaceCandidate] {
