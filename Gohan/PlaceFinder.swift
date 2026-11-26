@@ -137,6 +137,9 @@ enum PlaceFinder {
                     if old.url.isEmpty { old.url = c.url }
                     if old.hours.isEmpty { old.hours = c.hours; old.closedDays = c.closedDays }
                     if old.photo.isEmpty { old.photo = c.photo }
+                    if !c.note.isEmpty, !old.note.contains(c.note) { old.note = old.note.isEmpty ? c.note : old.note + "／" + c.note }
+                    old.alike = old.alike || c.alike
+                    old.facing = old.facing || c.facing
                     seen[k] = old
                 } else {
                     seen[k] = c

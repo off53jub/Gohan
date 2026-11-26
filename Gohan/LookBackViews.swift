@@ -422,6 +422,8 @@ struct ReviewView: View {
     private func confirm(_ meal: Meal) {
         meal.needsCheck = false
         meal.confidence = 1
+        // 「合ってる」と分かったお店を、同じ場所の迷っている食事にも入れる（「たぶん」のまま。案2）
+        RetroFix.fill(from: meal, context: context)
         try? context.save()
         Metrics.count("confirmed")
         AccuracyLog.hit(meal)

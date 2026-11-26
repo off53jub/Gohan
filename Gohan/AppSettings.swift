@@ -48,6 +48,12 @@ enum ScanSettings {
         set { d.set(newValue, forKey: "scan.companions") }
     }
 
+    /// iPhone の訪問の記録（どこに何分いたか）で、食事を区切る（2026-11-26 案4）
+    static var visitGroups: Bool {
+        get { d.object(forKey: "scan.visitGroups") as? Bool ?? true }
+        set { d.set(newValue, forKey: "scan.visitGroups") }
+    }
+
     /// 飲み物だけ・おやつの記録も一覧に並べる（便26）
     static var showSmall: Bool {
         get { d.object(forKey: "show.small") as? Bool ?? true }
@@ -99,6 +105,44 @@ enum AISettings {
     static var imageSearch: Bool {
         get { d.object(forKey: "ai.imageSearch") as? Bool ?? true }
         set { d.set(newValue, forKey: "ai.imageSearch") }
+    }
+
+    // 2026-11-26 に足した精度の施策（本人「1・2・3・4・5・6・9・10」）。どれも初めはオン。作る人のメニューで切れる
+
+    /// 前に行ったお店で撮った写真と、見た目を比べる（端末の中で。迷ったときは AI にも見比べてもらう。案1）
+    static var ownPhotos: Bool {
+        get { d.object(forKey: "ai.ownPhotos") as? Bool ?? true }
+        set { d.set(newValue, forKey: "ai.ownPhotos") }
+    }
+
+    /// お店がはっきりしたら、同じ場所の昔の「迷い」も埋める（案2）
+    static var retroFix: Bool {
+        get { d.object(forKey: "ai.retroFix") as? Bool ?? true }
+        set { d.set(newValue, forKey: "ai.retroFix") }
+    }
+
+    /// 小さな字のある所を、大きく切り出して AI に見せる（案3。1 枚 1 円くらい＝仮）
+    static var zoomText: Bool {
+        get { d.object(forKey: "ai.zoomText") as? Bool ?? true }
+        set { d.set(newValue, forKey: "ai.zoomText") }
+    }
+
+    /// 料理の種類が分かったのに、その種類のお店が候補に無いとき、種類の名前で近くを探し直す（案5）
+    static var genreSearch: Bool {
+        get { d.object(forKey: "ai.genreSearch") as? Bool ?? true }
+        set { d.set(newValue, forKey: "ai.genreSearch") }
+    }
+
+    /// 看板などの写真の向きと、写真の高さを手がかりにする（案9）
+    static var direction: Bool {
+        get { d.object(forKey: "ai.direction") as? Bool ?? true }
+        set { d.set(newValue, forKey: "ai.direction") }
+    }
+
+    /// はじめてのお店は、名物をネットで調べて料理名を合わせる（案10。1 軒 数円＝仮・月の上限つき）
+    static var shopMenu: Bool {
+        get { d.object(forKey: "ai.shopMenu") as? Bool ?? true }
+        set { d.set(newValue, forKey: "ai.shopMenu") }
     }
 
     /// 費用をこの端末で見せる（便76。鍵を QR で受け取った端末では初めは見せない）

@@ -19,9 +19,13 @@ struct SeenPhoto: Codable, Equatable {
     var noCamera: Bool = false
     /// 食べ物の上位の名前と強さ（ジャンルを見分けるため。2026-11-24）
     var labels: [String: Double] = [:]
+    /// 撮った所の高さ（m）と、その確かさ（m。小さいほど確か）。何階かの手がかり（2026-11-26 案9）
+    var altitude: Double?
+    var altitudeAccuracy: Double?
 
     init(id: String, date: Date, latitude: Double?, longitude: Double?, accuracy: Double?, food: Double, label: String,
-         used: Bool = false, isVideo: Bool = false, noCamera: Bool = false, labels: [String: Double] = [:]) {
+         used: Bool = false, isVideo: Bool = false, noCamera: Bool = false, labels: [String: Double] = [:],
+         altitude: Double? = nil, altitudeAccuracy: Double? = nil) {
         self.id = id
         self.date = date
         self.latitude = latitude
@@ -33,6 +37,8 @@ struct SeenPhoto: Codable, Equatable {
         self.isVideo = isVideo
         self.noCamera = noCamera
         self.labels = labels
+        self.altitude = altitude
+        self.altitudeAccuracy = altitudeAccuracy
     }
 
     // 前の版で覚えた写真（isVideo・noCamera が無い）も読めるように
@@ -49,6 +55,8 @@ struct SeenPhoto: Codable, Equatable {
         isVideo = try c.decodeIfPresent(Bool.self, forKey: .isVideo) ?? false
         noCamera = try c.decodeIfPresent(Bool.self, forKey: .noCamera) ?? false
         labels = try c.decodeIfPresent([String: Double].self, forKey: .labels) ?? [:]
+        altitude = try c.decodeIfPresent(Double.self, forKey: .altitude)
+        altitudeAccuracy = try c.decodeIfPresent(Double.self, forKey: .altitudeAccuracy)
     }
 }
 
@@ -62,6 +70,8 @@ enum Matcher {
     /// 同じ場所（100m 以内）なら、間が 90 分あいても同じ食事（飲み会・コースが 2 つに割れないように。2026-11-25）
     static let longMealGap: TimeInterval = 90 * 60
     static let sameSpotDistance = 100.0
+    /// 訪問の記録で「同じ所にいた」と分かるときは、間が 150 分あいても同じ食事（2026-11-26 案4。仮）
+    static let stayMealGap: TimeInterval = 150 * 60
     /// 撮ってからこの長さは待つ（食べている途中で区切らないため）
     static let holdBack: TimeInterval = 60 * 60
     /// この自信より低ければ「たぶん」の印を付ける
@@ -69,14 +79,14 @@ enum Matcher {
 
     // MARK: - 写真を食事にまとめる
 
-    static func groupMeals(_ photos: [SeenPhoto]) -> [[SeenPhoto]] {
+    /// visits は iPhone の「訪問」の記録（どこに何分いたか）。あれば、時間の決まりより先に見る（2026-11-26 案4）:
+    /// 同じ所にいたあいだの写真は、間が長くあいても同じ食事（長い飲み会が割れない）。
+    /// 別の所へ移っていたら、間が短くても別の食事（はしご）。
+    static func groupMeals(_ photos: [SeenPhoto], visits: [Visit] = [], now: Date = Date()) -> [[SeenPhoto]] {
         let sorted = photos.sorted { $0.date < $1.date }
         var groups: [[SeenPhoto]] = []
         for photo in sorted {
-            if var last = groups.last, let tail = last.last,
-               photo.date.timeIntervalSince(tail.date) <= (sameSpot(photo, last) ? longMealGap : mealGap),
-               closeEnough(photo, last),
-               !courseChanged(from: tail, to: photo) {
+            if var last = groups.last, let tail = last.last, sameMeal(tail: tail, photo: photo, group: last, visits: visits, now: now) {
                 last.append(photo)
                 groups[groups.count - 1] = last
             } else {
@@ -84,6 +94,17 @@ enum Matcher {
             }
         }
         return groups
+    }
+
+    private static func sameMeal(tail: SeenPhoto, photo: SeenPhoto, group: [SeenPhoto], visits: [Visit], now: Date) -> Bool {
+        let gap = photo.date.timeIntervalSince(tail.date)
+        let limit: TimeInterval
+        switch VisitLog.link(visits, tail.date, photo.date, now: now) {
+        case .moved: return false
+        case .sameStay: limit = stayMealGap
+        case .unknown: limit = sameSpot(photo, group) ? longMealGap : mealGap
+        }
+        return gap <= limit && closeEnough(photo, group) && !courseChanged(from: tail, to: photo)
     }
 
     /// カフェ → ごはん のように、甘いもの・飲み物と食事が 20 分以上あけて入れかわったら別の食事にする（便19）

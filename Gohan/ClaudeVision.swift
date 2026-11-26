@@ -257,6 +257,13 @@ enum ClaudeVision {
       鉄板の上の料理: 焼きそば・ステーキ・ハンバーグもあるので、生地を焼いたもの（お好み焼き・もんじゃ・たこ焼き）だけをお好み焼きにする。
     - dishes と genre は合わせる（dishes に「〇〇ラーメン」があれば genre はラーメン）。
     - ジャンルは料理の見た目とお店の名前の両方で決め、くい違うときは見た目を信じる。
+
+    候補のお店に付く印の読み方:
+    - 「前にここで撮った写真と似ている」は、この人が前にそのお店で撮った料理の写真と、今回の写真の見た目が近いという印（端末が比べたもの。
+      同じ種類の料理なら別のお店でも似るので、決め手にはしない。ほかの手がかりと合うときに後押しにする）。
+    - 「看板などの写真が向いていた先」は、前後に撮った看板・外観の写真で、カメラがそのお店のほうを向いていたという印（コンパスはずれるので、弱い手がかり）。
+    - 「／」のあとの一言は、そのお店の紹介（どんな料理のお店か）。「料理: …」は、そのお店で出している料理の名前（前に調べたもの）。
+      写真の料理がそのどれかだとはっきり分かるときは、dishes にその名前を使う。
     """
 
     static var schema: [String: Any] {
@@ -280,9 +287,11 @@ enum ClaudeVision {
     }
 
     /// 写真の説明と候補の一覧（AI に渡す文）
+    /// zoomCount: 文字の所を大きく切り出した絵の枚数。hints: そのほかの手がかり（写真の高さなど）。
+    /// located: 写真に場所があるか（無ければ、候補の距離は書かない）
     static func prompt(date: Date, area: String, candidates: [PlaceCandidate], lines: [String], foodCount: Int, clueCount: Int,
                        event: String? = nil, receipt: [String] = [], knownPlace: String? = nil, indoor: Bool = false,
-                       stay: Int? = nil) -> String {
+                       stay: Int? = nil, zoomCount: Int = 0, hints: [String] = [], located: Bool = true) -> String {
         let f = DateFormatter()
         f.locale = Locale(identifier: "ja_JP")
         f.dateFormat = "yyyy年M月d日(E) H:mm"
@@ -293,18 +302,28 @@ enum ClaudeVision {
             text += "その場所にいた時間: 約\(stay)分（iPhone の訪問の記録）。10分より短ければ、持ち帰り・立ち寄りかもしれません。\n"
         }
         if indoor { text += "写真の位置はずれているかもしれません（ビルの中・地下など）。距離より、料理の種類と写真の文字を重く見てください。\n" }
-        text += "写真: はじめの \(foodCount) 枚は料理、そのあとの \(clueCount) 枚は前後に撮った看板・メニューなど（無いこともある）\n\n"
+        for hint in hints where !hint.isEmpty { text += hint + "\n" }
+        text += "写真: はじめの \(foodCount) 枚は料理、そのあとの \(clueCount) 枚は前後に撮った看板・メニューなど（無いこともある）\n"
+        if zoomCount > 0 {
+            text += "最後の \(zoomCount) 枚は、上の写真のうち小さな字のある所を大きく切り出したもの（店名・料理名を読むため。別の写真ではない）\n"
+        }
+        text += "\n"
         if let knownPlace {
             text += "お店はもう分かっています（前にも来たお店）: 0. \(knownPlace)\nplace_index は 0 にして、料理を中心に見てください。\n"
         } else if candidates.isEmpty {
             text += "お店の候補: なし（写真の位置が分からないか、近くにお店が見つからなかった）。place_index は -1 にする。\n"
         } else {
-            text += "お店の候補（写真の位置からの距離つき）:\n"
+            text += located ? "お店の候補（写真の位置からの距離つき）:\n"
+                : "お店の候補（写真に場所が無いので、前に行ったお店のうち写真が似ているもの。どれでもなければ -1）:\n"
             for (i, c) in candidates.enumerated() {
+                let far = located && c.hasDistance ? "\(Int(c.distance.rounded()))m" : "距離は不明"
                 let kind = Genre.from(category: c.category).map { "・\($0)" } ?? ""
                 let visited = c.visited ? "・前にも行ったお店" : ""
                 let closed = c.closedThen ? "・その時刻は営業時間外のはず" : ""
-                text += "\(i). \(c.name)（\(Int(c.distance.rounded()))m\(kind)\(visited)\(closed)）\(c.address)\n"
+                let alike = c.alike ? "・前にここで撮った写真と似ている" : ""
+                let facing = c.facing ? "・看板などの写真が向いていた先" : ""
+                let note = c.note.isEmpty ? "" : " ／\(c.note)"
+                text += "\(i). \(c.name)（\(far)\(kind)\(visited)\(closed)\(alike)\(facing)）\(c.address)\(note)\n"
             }
         }
         if !receipt.isEmpty {

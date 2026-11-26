@@ -112,9 +112,22 @@ enum OSMPlaces {
                   let lon = (e["lon"] as? NSNumber ?? center?["lon"] as? NSNumber)?.doubleValue else { return nil }
             let kind = tags["cuisine"] ?? tags["amenity"] ?? tags["shop"] ?? ""
             let address = [tags["addr:city"], tags["addr:street"], tags["addr:housenumber"]].compactMap { $0 }.joined()
-            return PlaceCandidate(name: name, address: address, category: "osm:" + kind,
-                                  latitude: lat, longitude: lon, distance: Matcher.distance(latitude, longitude, lat, lon))
+            var c = PlaceCandidate(name: name, address: address, category: "osm:" + kind,
+                                   latitude: lat, longitude: lon, distance: Matcher.distance(latitude, longitude, lat, lon))
+            c.note = note(tags)
+            return c
         }
+    }
+
+    /// どんなお店か の一言（料理の種類・何階か。AI に見せるだけ。2026-11-26 案6）
+    static func note(_ tags: [String: String]) -> String {
+        var parts: [String] = []
+        if let cuisine = tags["cuisine"], !cuisine.isEmpty {
+            parts.append(cuisine.replacingOccurrences(of: ";", with: "・").replacingOccurrences(of: "_", with: " "))
+        }
+        // level は地上 1 階が 0
+        if let level = tags["level"], let floor = Int(level) { parts.append(floor < 0 ? "地下 \(-floor) 階" : "\(floor + 1) 階") }
+        return parts.joined(separator: "・")
     }
 }
 
