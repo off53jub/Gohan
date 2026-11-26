@@ -101,9 +101,12 @@ final class Accuracy8Tests: XCTestCase {
         // お店が無い・迷っている → 埋める
         XCTAssertTrue(RetroFix.shouldFill(other(place: false, confidence: 0), sureGenre: "ラーメン", shopGenre: "ラーメン"))
         XCTAssertTrue(RetroFix.shouldFill(other(place: true, confidence: 0.4), sureGenre: "ラーメン", shopGenre: nil))
-        // なかまのジャンル（つけ麺）・ジャンル不明も埋める
+        // ごく近いジャンル（ラーメンとつけ麺）は埋める。お店の名前から分かるジャンルが合うときも
         XCTAssertTrue(RetroFix.shouldFill(other(place: false, confidence: 0.3, genre: "つけ麺"), sureGenre: "ラーメン", shopGenre: nil))
-        XCTAssertTrue(RetroFix.shouldFill(other(place: false, confidence: 0.3, genre: "その他"), sureGenre: "ラーメン", shopGenre: nil))
+        XCTAssertTrue(RetroFix.shouldFill(other(place: false, confidence: 0.3, genre: "寿司"), sureGenre: "和食", shopGenre: "寿司"))
+        // ジャンル不明・広いなかま（和食どうし）というだけでは埋めない（フードコートや飲食店ビルの別のお店かもしれない）
+        XCTAssertFalse(RetroFix.shouldFill(other(place: false, confidence: 0.3, genre: "その他"), sureGenre: "ラーメン", shopGenre: nil))
+        XCTAssertFalse(RetroFix.shouldFill(other(place: false, confidence: 0.3, genre: "定食"), sureGenre: "寿司", shopGenre: "寿司"))
         // 自信のある食事・本人が決めた食事には触らない
         XCTAssertFalse(RetroFix.shouldFill(other(place: true, confidence: 0.8), sureGenre: "ラーメン", shopGenre: "ラーメン"))
         XCTAssertFalse(RetroFix.shouldFill(other(place: false, confidence: 1), sureGenre: "ラーメン", shopGenre: "ラーメン"))

@@ -4,7 +4,8 @@ import SwiftData
 // あとで分かったお店で、同じ場所の「迷い」を埋める（2026-11-26 案2）。
 // 看板が読めた・本人が選んだ、などでお店がはっきりしたとき、同じ場所（50m 以内）で撮った昔の食事のうち、
 // お店が決まっていない・自信の低いものに、同じお店を入れる。入れたものは「たぶん」のままにする（直さなくても困らない）。
-// 本人が決めた食事・自信のある食事には触らない。料理の系統が合わない食事にも入れない（同じビルの別のお店かもしれない）。
+// 本人が決めた食事・自信のある食事には触らない。料理のジャンルが同じ食事にだけ入れる
+// （フードコートや飲食店ビルでは、50m の中に何軒もある。ジャンルの分からない食事・なかまのジャンルというだけの食事には入れない）。
 // 「同じお店に間違えていた食事をまとめて直す」（お店を選び直したときに聞く。便52）は、前からある。
 enum RetroFix {
     /// 同じ場所とみなす距離（m。仮）
@@ -33,13 +34,17 @@ enum RetroFix {
         guard !other.hidden, other.eatenOut, !other.atHomeOrWork, let d = other.distance, d <= reach else { return false }
         // お店が入っている食事は、迷っているものだけ。入っていない食事も、本人が決めたもの（自信 1）は触らない
         guard other.confidence < (other.hasPlace ? 0.6 : 1) else { return false }
-        if other.genre == "その他" { return true }
+        // ジャンルの分からない食事には入れない（近くの別のお店かもしれない）
+        guard other.genre != "その他" else { return false }
         func fits(_ genre: String?) -> Bool {
             guard let genre else { return false }
-            return genre == other.genre || Matcher.genreFamilies.contains { $0.contains(genre) && $0.contains(other.genre) }
+            return genre == other.genre || sameKind.contains { $0.contains(genre) && $0.contains(other.genre) }
         }
         return fits(sureGenre) || fits(shopGenre)
     }
+
+    /// 同じお店で出るのがふつうの、ごく近いジャンルの組（和食どうし・洋食どうし のような広いなかまは入れない）
+    static let sameKind: [Set<String>] = [["ラーメン", "つけ麺"], ["カフェ", "スイーツ"]]
 
     /// 元に戻すための覚え
     struct Change {

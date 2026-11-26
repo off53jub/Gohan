@@ -739,10 +739,18 @@ final class Scanner {
         guard !old, let place = meal.place, meal.eatenOut, !meal.aiPending, meal.confidence >= Matcher.sureLine,
               !meal.dishes.isEmpty, place.menuNames.isEmpty, ShopMenu.due(place.menuCheckedAt), ShopMenu.canUse else { return }
         status = "お店の料理名を調べています"
-        place.menuCheckedAt = Date()
         let area = [meal.region, meal.area].filter { !$0.isEmpty }.joined(separator: " ")
-        guard let answer = try? await ShopMenu.lookup(shop: place.name, address: place.address, area: area, genre: meal.genre,
-                                                      dishes: meal.dishes, photo: photo) else { return }
+        let found: ShopMenu.Answer?
+        do {
+            found = try await ShopMenu.lookup(shop: place.name, address: place.address, area: area, genre: meal.genre,
+                                              dishes: meal.dishes, photo: photo)
+        } catch {
+            // 通信の失敗などは、次にこのお店に来たときにもう一度
+            return
+        }
+        // 調べ終わった印（見つからなくても、しばらくは調べ直さない）
+        place.menuCheckedAt = Date()
+        guard let answer = found else { return }
         place.menuNames = answer.menu
         if !answer.menu.isEmpty, let renamed = ShopMenu.renamed(old: meal.dishes, new: answer.dishes) {
             meal.dishes = Matcher.canonicalDishes(renamed, book: dishBook)
