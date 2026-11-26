@@ -31,6 +31,8 @@ targets:
         # CI が Secrets から入れる（無ければ空。端末で入れた鍵があればそちらを使う）
         HotPepperKey: $(HOTPEPPER_KEY)
         GooglePlacesKey: $(GOOGLE_PLACES_KEY)
+        YahooAppID: $(YAHOO_APP_ID)
+        FoursquareKey: $(FOURSQUARE_KEY)
         ClaudeKey: $(CLAUDE_KEY)
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)

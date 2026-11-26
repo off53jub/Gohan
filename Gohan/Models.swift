@@ -272,12 +272,37 @@ enum Genre {
     static func from(category: String) -> String? {
         if category.hasPrefix("genre:") { return hotpepper[String(category.dropFirst(6))] }
         if category.hasPrefix("google:") { return google[String(category.dropFirst(7))] }
+        // Yahoo!（日本語のジャンル名）・Foursquare（英語の種類名）・OpenStreetMap（cuisine）。2026-11-26
+        if category.hasPrefix("yahoo:") { return Matcher.genre(fromText: String(category.dropFirst(6))) }
+        if category.hasPrefix("fsq:") { return fromEnglish(String(category.dropFirst(4))) }
+        if category.hasPrefix("osm:") { return fromEnglish(String(category.dropFirst(4)).replacingOccurrences(of: "_", with: " ")) }
         switch category {
         case "MKPOICategoryCafe": return "カフェ"
         case "MKPOICategoryBakery": return "パン"
         case "MKPOICategoryBrewery", "MKPOICategoryWinery", "MKPOICategoryNightlife": return "バー"
         default: return nil
         }
+    }
+
+    /// 英語の料理・お店の種類（Foursquare の「Ramen Restaurant」・OpenStreetMap の「ramen;japanese」など）
+    static func fromEnglish(_ text: String) -> String? {
+        let t = text.lowercased()
+        let table: [(String, String)] = [
+            ("tsukemen", "つけ麺"), ("ramen", "ラーメン"), ("noodle", "ラーメン"), ("soba", "そば・うどん"), ("udon", "そば・うどん"),
+            ("sushi", "寿司"), ("yakitori", "焼き鳥"), ("yakiniku", "焼肉"), ("bbq", "焼肉"), ("barbecue", "焼肉"),
+            ("okonomiyaki", "お好み焼き"), ("monja", "お好み焼き"), ("takoyaki", "お好み焼き"), ("izakaya", "居酒屋"),
+            ("donburi", "丼"), ("gyudon", "丼"), ("beef bowl", "丼"), ("curry", "カレー"), ("indian", "カレー"),
+            ("korean", "韓国料理"), ("chinese", "中華"), ("dumpling", "中華"), ("thai", "エスニック"), ("vietnamese", "エスニック"),
+            ("italian", "イタリアン"), ("pizza", "イタリアン"), ("pasta", "イタリアン"), ("french", "フレンチ"), ("bistro", "フレンチ"),
+            ("burger", "ハンバーガー"), ("fast food", "ファストフード"), ("fried chicken", "ファストフード"),
+            ("dessert", "スイーツ"), ("cake", "スイーツ"), ("ice cream", "スイーツ"), ("pastry", "スイーツ"), ("bakery", "パン"),
+            // 「steak」「teishoku」に tea が含まれるので、tea より先に見る
+            ("hot pot", "鍋"), ("shabu", "鍋"), ("sukiyaki", "鍋"), ("tonkatsu", "定食"), ("teishoku", "定食"),
+            ("steak", "洋食"), ("western", "洋食"), ("diner", "洋食"),
+            ("coffee", "カフェ"), ("cafe", "カフェ"), ("tea", "カフェ"), ("bar", "バー"), ("pub", "バー"),
+            ("japanese", "和食"),
+        ]
+        return table.first { t.contains($0.0) }?.1
     }
 
     /// ホットペッパーのジャンル名
