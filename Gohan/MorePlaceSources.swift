@@ -16,8 +16,13 @@ extension KeyStore {
 
 /// Yahoo! ローカルサーチ API（YOLP）。クレジットの表示が要る（YahooCredit）
 enum YahooLocal {
+    /// 使わない（2026-11-26）。YOLP の規約が 2026-11-16 に改定され、YOLP の情報を生成 AI に入れることが禁止された。
+    /// このアプリはお店の候補を Claude に渡して選ばせるので、Yahoo! のお店を候補に混ぜられない。
+    /// （新しく作った Client ID も 403「AppID was not allowed of URL」で通らなかった）
+    static let allowed = false
+
     static func search(query: String?, latitude: Double, longitude: Double, radius: Double) async -> [PlaceCandidate] {
-        guard let appID = KeyStore.yahooAppID,
+        guard allowed, let appID = KeyStore.yahooAppID,
               var c = URLComponents(string: "https://map.yahooapis.jp/search/local/V1/localSearch") else { return [] }
         var items = [
             URLQueryItem(name: "appid", value: appID),
@@ -231,10 +236,20 @@ extension GooglePlaces {
     }
 }
 
+/// OpenStreetMap のクレジット（ODbL で表示が要る）
+struct OSMCredit: View {
+    var body: some View {
+        if let url = URL(string: "https://www.openstreetmap.org/copyright") {
+            Link("© OpenStreetMap contributors", destination: url)
+                .font(.caption2)
+        }
+    }
+}
+
 /// Yahoo! のクレジット（規約で表示が要る）
 struct YahooCredit: View {
     var body: some View {
-        if KeyStore.yahooAppID != nil, let url = URL(string: "https://developer.yahoo.co.jp/sitemap/") {
+        if YahooLocal.allowed, KeyStore.yahooAppID != nil, let url = URL(string: "https://developer.yahoo.co.jp/sitemap/") {
             Link("Webサービス by Yahoo! JAPAN", destination: url)
                 .font(.caption2)
         }

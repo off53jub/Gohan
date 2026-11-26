@@ -273,7 +273,7 @@ struct AdvancedSettingsView: View {
         let photos = "取った写真 \(Metrics.value("googlePhotos"))/\(LookAlike.monthlyPhotoFetches) 枚・見比べた \(Metrics.value("lookAlikes")) 回"
         lines.append("迷ったとき: " + search + "・" + shops + "・" + photos)
         lines.append("強いモデルで聞き直した \(Metrics.value("escalations")) 回・ふたり帖の答えで補った \(Metrics.value("partnerFixes")) 回")
-        let more = "Yahoo! \(Metrics.value("yahooCalls")) 回・OpenStreetMap \(Metrics.value("osmCalls"))/\(OSMPlaces.monthlyCap) 回"
+        let more = "OpenStreetMap \(Metrics.value("osmCalls"))/\(OSMPlaces.monthlyCap) 回"
         let paid = "Foursquare \(Metrics.value("foursquareCalls"))/\(FoursquarePlaces.monthlyCap) 回・クチコミ \(Metrics.value("reviewChecks"))/\(ReviewMatch.monthlyCap) 軒"
         lines.append(more + "・" + paid)
         if let p = GooglePlaces.lastProblem { lines.append("Google の最後の失敗: " + p) }
@@ -374,9 +374,9 @@ struct AdvancedSettingsView: View {
                     }
                     .disabled(googleKey.isEmpty)
                 }
-                LabeledContent("Yahoo! ローカルサーチ", value: KeyStore.yahooAppID == nil ? "鍵なし" : "使っています")
                 LabeledContent("Foursquare", value: KeyStore.foursquareKey == nil ? "鍵なし" : "迷ったときだけ")
-                YahooCredit()
+                LabeledContent("OpenStreetMap", value: "迷ったときだけ")
+                OSMCredit()
                 if hasHotpepper {
                     LabeledContent("ホットペッパー", value: "使っています")
                     HotPepperCredit()

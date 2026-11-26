@@ -591,6 +591,9 @@ struct CandidatePicker: View {
                     if (meal.candidates + results).contains(where: { $0.category.hasPrefix("yahoo:") }) {
                         YahooCredit()
                     }
+                    if (meal.candidates + results).contains(where: { $0.category.hasPrefix("osm:") }) {
+                        OSMCredit()
+                    }
                 }
                 .padding(20)
             }
