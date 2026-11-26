@@ -27,17 +27,20 @@ extension KeyStore {
 
 extension PlaceFinder {
     /// 近くのお店（Apple のマップ＋ホットペッパー）。Google は、ここで見つからないときだけ別に呼ぶ（本人の希望。2026-11-24）
+    /// Yahoo! ローカルサーチも足した（日本の小さなお店に強い・無料。2026-11-26）
     static func nearbyAll(latitude: Double, longitude: Double, radius: Double) async -> [PlaceCandidate] {
         async let apple = nearby(latitude: latitude, longitude: longitude, radius: radius)
         async let pepper = HotPepper.search(keyword: nil, latitude: latitude, longitude: longitude, radius: radius)
-        return merge([await apple, await pepper])
+        async let yahoo = YahooLocal.search(query: nil, latitude: latitude, longitude: longitude, radius: radius)
+        return merge([await apple, await pepper, await yahoo])
     }
 
-    /// 名前で探す（Apple のマップ＋ホットペッパー）
+    /// 名前で探す（Apple のマップ＋ホットペッパー＋Yahoo!）
     static func searchAll(_ query: String, latitude: Double, longitude: Double, radius: Double) async -> [PlaceCandidate] {
         async let apple = search(query, latitude: latitude, longitude: longitude, radius: radius)
         async let pepper = HotPepper.search(keyword: query, latitude: latitude, longitude: longitude, radius: radius)
-        return merge([await apple, await pepper])
+        async let yahoo = YahooLocal.search(query: query, latitude: latitude, longitude: longitude, radius: radius)
+        return merge([await apple, await pepper, await yahoo])
     }
 
     /// 名前で探す。Apple・ホットペッパーで見つからなければ Google でも探す

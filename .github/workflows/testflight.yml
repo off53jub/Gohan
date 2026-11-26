@@ -108,6 +108,9 @@ jobs:
           # お店の候補の取り元の鍵（あれば。アプリに入れて、端末で入れなくて済むようにする。2026-11-24）
           HOTPEPPER_KEY: ${{ secrets.HOTPEPPER_KEY }}
           GOOGLE_PLACES_KEY: ${{ secrets.GOOGLE_PLACES_KEY }}
+          # Yahoo! ローカルサーチ・Foursquare の鍵（あれば。2026-11-26）
+          YAHOO_APP_ID: ${{ secrets.YAHOO_APP_ID }}
+          FOURSQUARE_KEY: ${{ secrets.FOURSQUARE_KEY }}
           # Claude の鍵（あれば。ういちゃんが iPhone で入れなくて済むように。2026-11-24 本人「公開をやめて組み込む」）
           CLAUDE_KEY: ${{ secrets.CLAUDE_API_KEY }}
         run: |
@@ -121,6 +124,7 @@ jobs:
               DEVELOPMENT_TEAM="$TEAM_ID" \
               CURRENT_PROJECT_VERSION="${{ github.run_number }}" \
               HOTPEPPER_KEY="$HOTPEPPER_KEY" GOOGLE_PLACES_KEY="$GOOGLE_PLACES_KEY" CLAUDE_KEY="$CLAUDE_KEY" \
+              YAHOO_APP_ID="$YAHOO_APP_ID" FOURSQUARE_KEY="$FOURSQUARE_KEY" \
               "$@" 2>&1 | tee -a "$RUNNER_TEMP/build.log"
             return ${PIPESTATUS[0]}
           }

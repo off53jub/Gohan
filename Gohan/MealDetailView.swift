@@ -588,6 +588,9 @@ struct CandidatePicker: View {
                     if (meal.candidates + results).contains(where: { $0.category.hasPrefix("genre:") }) {
                         HotPepperCredit()
                     }
+                    if (meal.candidates + results).contains(where: { $0.category.hasPrefix("yahoo:") }) {
+                        YahooCredit()
+                    }
                 }
                 .padding(20)
             }

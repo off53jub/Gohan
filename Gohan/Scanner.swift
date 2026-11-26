@@ -427,13 +427,21 @@ final class Scanner {
             }
             // Apple・ホットペッパーで見つからない（お店が決まらない・自信が低い）ときだけ、Google でも探す（本人の希望。2026-11-24）
             // PC から入れた食事では呼ばない（何千食もあるので。Google は使いすぎると料金がかかる。必要なら「お店を選ぶ」で自分で探す。2026-11-25）
-            if preset == nil, meal.place == nil || meal.confidence < 0.6, KeyStore.googleKey != nil, !meal.aiPending {
-                status = "Google でも探しています"
+            // 2026-11-26: OpenStreetMap（無料）と Foursquare（月の上限つき）も、迷ったときに足す
+            if preset == nil, meal.place == nil || meal.confidence < 0.6, !meal.aiPending {
+                status = "ほかの地図でも探しています"
+                let near = indoor ? 450.0 : 250.0
+                async let osm = OSMPlaces.nearby(latitude: spot.latitude, longitude: spot.longitude, radius: near)
+                async let fsq = FoursquarePlaces.nearby(latitude: spot.latitude, longitude: spot.longitude, radius: near)
                 var extra: [PlaceCandidate] = []
-                if let seen = verdict?.name_seen, !seen.isEmpty {
-                    extra += await GooglePlaces.text(seen, latitude: spot.latitude, longitude: spot.longitude, radius: 1000)
+                if KeyStore.googleKey != nil {
+                    if let seen = verdict?.name_seen, !seen.isEmpty {
+                        extra += await GooglePlaces.text(seen, latitude: spot.latitude, longitude: spot.longitude, radius: 1000)
+                    }
+                    extra += await GooglePlaces.nearby(latitude: spot.latitude, longitude: spot.longitude, radius: near)
                 }
-                extra += await GooglePlaces.nearby(latitude: spot.latitude, longitude: spot.longitude, radius: indoor ? 450 : 250)
+                extra += await osm
+                extra += await fsq
                 let already = Set(ranked.map { Matcher.normalize($0.name) })
                 let fresh = PlaceFinder.merge([extra]).filter { !already.contains(Matcher.normalize($0.name)) }
                 if !fresh.isEmpty {
@@ -445,7 +453,7 @@ final class Scanner {
                     meal.candidates = merged
                     let core = Matcher.coreName(verdict?.name_seen ?? "")
                     if !core.isEmpty, let named = fresh.first(where: { Matcher.similarity(Matcher.coreName($0.name), core) >= 0.6 }) {
-                        setPlace(named, on: meal, confidence: 0.8, reason: "写真の店名「\(core)」を Google で見つけました", context: context)
+                        setPlace(named, on: meal, confidence: 0.8, reason: "写真の店名「\(core)」をほかの地図で見つけました", context: context)
                     } else if preset == nil, ClaudeLink.isReady, Spend.canSpend, !foodJPEGs.isEmpty {
                         // 増えた候補で、AI にもう一度選んでもらう（PC から入れた食事では AI を呼ばない）
                         let again = ClaudeVision.prompt(date: first.date, area: meal.area, candidates: merged, lines: lines,
@@ -462,7 +470,7 @@ final class Scanner {
                             setPlace(pick, on: meal, confidence: confidence, reason: Matcher.reason(for: pick, source: "device", receipt: false), context: context)
                         }
                     }
-                    meal.source += "+google"
+                    meal.source += "+more"
                 }
             }
             // 4a. まだ迷っていれば、料理の写真で画像検索する（似た写真がのったページの題名に、候補のお店の名前があるか）
@@ -490,6 +498,18 @@ final class Scanner {
                         setPlace(found.shop, on: meal, confidence: min(0.8, found.answer.confidence),
                                  reason: "お店の写真と見比べました" + why, context: context)
                         meal.source += "+look"
+                    }
+                }
+            }
+            // 4c. まだ迷っていれば、写真から読んだ料理名が、候補のお店の Google のクチコミに出てくるか（1 軒だけならそのお店。月の上限つき）
+            if preset == nil, meal.confidence < 0.6, !meal.aiPending {
+                let words = ReviewMatch.keywords(dishes: meal.dishes)
+                if !words.isEmpty {
+                    status = "クチコミと見比べています"
+                    if let found = await ReviewMatch.pick(candidates: Array(meal.candidates.prefix(4)), keywords: words,
+                                                          latitude: spot.latitude, longitude: spot.longitude) {
+                        setPlace(found.shop, on: meal, confidence: 0.7, reason: "クチコミに「\(found.word)」がありました", context: context)
+                        meal.source += "+review"
                     }
                 }
             }
