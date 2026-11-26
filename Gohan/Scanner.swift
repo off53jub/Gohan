@@ -130,6 +130,8 @@ final class Scanner {
         try? context.save()
         Backup.autoWrite(context: context)
         await checkClosed(context: context)
+        // Google から取ったお店を、保存してよい取り元で見つけ直す（Google の決まり。2026-11-26）
+        await PlaceRehome.sweep(context: context)
         await refreshFences(context: context)
 
         if notify, let meal = added.last {

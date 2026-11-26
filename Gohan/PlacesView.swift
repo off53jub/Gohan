@@ -288,6 +288,7 @@ struct PlaceDetailView: View {
                             Text(place.name).font(.brush(26, relativeTo: .title)).foregroundStyle(Ink.ai)
                             Text([place.mainGenre, place.address].filter { !$0.isEmpty }.joined(separator: "・"))
                                 .font(.footnote).foregroundStyle(Ink.hai)
+                            if place.fromGoogle { GoogleCredit() }
                         }
                         Spacer()
                         HeartButton(on: place.wantAgain, size: 24) {

@@ -30,6 +30,13 @@ final class Place {
     var closedCheckedAt: Date?
     /// 近くに来たと知らせた日（同じ日に何度も知らせない）
     var notifiedAt: Date?
+    /// Google の place ID（Google の規約で、ずっと残してよいのはこれだけ。2026-11-26）
+    var googleID: String = ""
+    /// Google から名前・位置を取ってきた日（Google のお店は、Apple などで見つけ直せなければ 30 日以内に取り直す）
+    var googleFetchedAt: Date?
+
+    /// Google から取ってきたお店（見つけ直して置きかえる対象）
+    var fromGoogle: Bool { category.hasPrefix("google:") }
 
     init(candidate: PlaceCandidate, date: Date) {
         key = candidate.key
@@ -43,6 +50,7 @@ final class Place {
         firstVisit = date
         phone = candidate.phone
         url = candidate.url
+        googleID = candidate.googleID
     }
 
     /// 消していない食事（新しい順）
@@ -62,8 +70,10 @@ final class Place {
     var lastVisit: Date? { visibleMeals.first?.date }
 
     var candidate: PlaceCandidate {
-        PlaceCandidate(name: name, address: address, category: category, latitude: latitude, longitude: longitude,
-                       distance: 0, visited: true, phone: phone, url: url)
+        var c = PlaceCandidate(name: name, address: address, category: category, latitude: latitude, longitude: longitude,
+                               distance: 0, visited: true, phone: phone, url: url)
+        c.googleID = googleID
+        return c
     }
 }
 
@@ -214,6 +224,8 @@ struct PlaceCandidate: Codable, Hashable, Identifiable {
     var photo: String = ""
     /// 2 枚目からの紹介写真（Google の写真の名前。料理の写真を選んで見比べるため。2026-11-25）
     var morePhotos: [String] = []
+    /// Google の place ID（Google から取った候補だけ）
+    var googleID: String = ""
     /// 写真を撮った時刻に閉まっていたはず（その場で付ける印）
     var closedThen: Bool = false
 
@@ -252,6 +264,7 @@ struct PlaceCandidate: Codable, Hashable, Identifiable {
         closedDays = try c.decodeIfPresent(String.self, forKey: .closedDays) ?? ""
         photo = try c.decodeIfPresent(String.self, forKey: .photo) ?? ""
         morePhotos = try c.decodeIfPresent([String].self, forKey: .morePhotos) ?? []
+        googleID = try c.decodeIfPresent(String.self, forKey: .googleID) ?? ""
         closedThen = try c.decodeIfPresent(Bool.self, forKey: .closedThen) ?? false
     }
 

@@ -594,6 +594,9 @@ struct CandidatePicker: View {
                     if (meal.candidates + results).contains(where: { $0.category.hasPrefix("osm:") }) {
                         OSMCredit()
                     }
+                    if (meal.candidates + results).contains(where: { $0.category.hasPrefix("google:") }) {
+                        GoogleCredit()
+                    }
                 }
                 .padding(20)
             }
@@ -672,6 +675,11 @@ struct CandidatePicker: View {
         meal.needsCheck = false
         meal.confidence = 1
         try? context.save()
+        // Google から選んだお店は、保存してよい取り元で見つけ直す（Google の決まり）
+        if place.fromGoogle {
+            let ctx = context
+            Task { await PlaceRehome.rehome(place, context: ctx) }
+        }
         let current = meal
         UndoCenter.shared.offer("お店を「\(place.name)」にしました") {
             current.place = old
