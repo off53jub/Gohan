@@ -654,7 +654,8 @@ struct CandidatePicker: View {
     }
 
     private func detail(_ c: PlaceCandidate) -> String {
-        var parts = ["\(Int(c.distance.rounded()))m"]
+        // 場所の無い写真の候補は、距離が分からない
+        var parts = c.hasDistance ? ["\(Int(c.distance.rounded()))m"] : []
         if c.visited { parts.append("前にも行った") }
         if !c.address.isEmpty { parts.append(c.address) }
         return parts.joined(separator: "・")
@@ -674,6 +675,10 @@ struct CandidatePicker: View {
         if meal.genre == "その他", let g = Genre.from(category: candidate.category) { meal.genre = g }
         meal.needsCheck = false
         meal.confidence = 1
+        // この食事の写真の「見た目の印」を、選んだお店に付けかえる（案1）
+        OwnPhotos.move(photoIDs: meal.photoIDs, to: place.key)
+        // 同じ場所の、お店が決まっていない・迷っている食事にも入れる（「たぶん」のまま。案2）
+        let filled = RetroFix.fill(from: meal, context: context)
         try? context.save()
         // Google から選んだお店は、保存してよい取り元で見つけ直す（Google の決まり）
         if place.fromGoogle {
@@ -681,9 +686,12 @@ struct CandidatePicker: View {
             Task { await PlaceRehome.rehome(place, context: ctx) }
         }
         let current = meal
-        UndoCenter.shared.offer("お店を「\(place.name)」にしました") {
+        let also = filled.isEmpty ? "" : "（同じ場所の \(filled.count) 食にも入れました）"
+        UndoCenter.shared.offer("お店を「\(place.name)」にしました" + also) {
             current.place = old
             (current.needsCheck, current.confidence, current.eatenOut) = oldState
+            RetroFix.undo(filled)
+            OwnPhotos.move(photoIDs: current.photoIDs, to: old?.key)
             try? context.save()
         }
         // 同じ間違いをまとめて直す（便52）
@@ -708,6 +716,7 @@ struct CandidatePicker: View {
             other.needsCheck = false
             other.confidence = 1
             other.reason = "まとめて直しました"
+            OwnPhotos.move(photoIDs: other.photoIDs, to: place.key)
         }
         if let old { cleanUp(old) }
         try? context.save()
@@ -733,6 +742,7 @@ struct CandidatePicker: View {
         meal.needsCheck = false
         meal.confidence = 1
         meal.reason = ""
+        OwnPhotos.move(photoIDs: meal.photoIDs, to: nil)
         if let old { cleanUp(old) }
         try? context.save()
         let current = meal

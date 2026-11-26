@@ -16,6 +16,8 @@ enum LookAlike {
     紹介写真はお店の一部しか写していません。似ていないだけで決めつけず、決め手（同じ器・同じ料理・同じ内装）があるときだけ confidence を高くします。
     はっきり合うお店が無ければ index を -1、confidence を 0 にします。
     reason は決め手を20字くらいで書きます。
+    「この人が前に撮った写真」と書いた写真は、同じ人がそのお店で前に撮ったものです。器・トレー・テーブル・盛り付けが同じなら、強い決め手になります。
+    同じ種類の料理というだけでは決め手にしません（ラーメンはどのお店でもラーメンに見えます）。
     """
 
     static var schema: [String: Any] {
@@ -41,11 +43,12 @@ enum LookAlike {
     }
 
     /// 見比べる候補をそろえる。紹介写真の無い上位のお店は、Google で名前から探して写真を取ってくる（迷ったときだけ・月の上限まで）
-    static func withPhotos(_ ranked: [PlaceCandidate], latitude: Double, longitude: Double) async -> [PlaceCandidate] {
+    /// own は、この人が前に撮った写真のあるお店（候補の印）。そのお店は紹介写真を取りに行かない（2026-11-26 案1）
+    static func withPhotos(_ ranked: [PlaceCandidate], latitude: Double, longitude: Double, own: Set<String> = []) async -> [PlaceCandidate] {
         var out: [PlaceCandidate] = []
         for c in ranked.prefix(8) where !c.closedThen {
             if out.count >= 4 { break }
-            if !c.photo.isEmpty { out.append(c); continue }
+            if !c.photo.isEmpty || own.contains(c.key) { out.append(c); continue }
             guard KeyStore.googleKey != nil, Metrics.value("lookupShops") < monthlyShopLookups else { continue }
             Metrics.count("lookupShops")
             let found = await GooglePlaces.text(c.name, latitude: c.latitude, longitude: c.longitude, radius: 300)
@@ -76,19 +79,24 @@ enum LookAlike {
     }
 
     /// 見比べてもらう。合うお店があれば、そのお店と答えを返す
-    static func ask(food: [Data], shops: [PlaceCandidate]) async throws -> (shop: PlaceCandidate, answer: Answer)? {
+    /// own は、候補の印 → この人がそのお店で前に撮った写真。あれば紹介写真の代わりに使う（2026-11-26 案1）
+    static func ask(food: [Data], shops: [PlaceCandidate], own: [String: [Data]] = [:]) async throws -> (shop: PlaceCandidate, answer: Answer)? {
         guard ClaudeLink.isReady else { throw ClaudeError.noKey }
         guard Spend.canSpend else { throw ClaudeError.capped }
-        var named: [(shop: PlaceCandidate, photos: [Data])] = []
+        var named: [(shop: PlaceCandidate, photos: [Data], mine: Bool)] = []
         for shop in shops {
+            if let mine = own[shop.key], !mine.isEmpty {
+                named.append((shop, mine, true))
+                continue
+            }
             let photos = await foodPhotos(of: shop)
-            if !photos.isEmpty { named.append((shop, photos)) }
+            if !photos.isEmpty { named.append((shop, photos, false)) }
         }
         guard !named.isEmpty, !food.isEmpty else { return nil }
         var content: [[String: Any]] = [["type": "text", "text": "食事の写真:"]]
         for data in food.prefix(2) { content.append(block(data)) }
         for (i, item) in named.enumerated() {
-            content.append(["type": "text", "text": "候補 \(i): \(item.shop.name)（\(Int(item.shop.distance.rounded()))m）の紹介写真（\(item.photos.count) 枚）"])
+            content.append(["type": "text", "text": label(index: i, shop: item.shop, count: item.photos.count, mine: item.mine)])
             for data in item.photos { content.append(block(data)) }
         }
         content.append(["type": "text", "text": "食事の写真に一番合う候補の番号を選んでください。"])
@@ -114,6 +122,13 @@ enum LookAlike {
         guard let answer = try? JSONDecoder().decode(Answer.self, from: Data(text.utf8)),
               answer.index >= 0, answer.index < named.count else { return nil }
         return (named[answer.index].shop, answer)
+    }
+
+    /// 候補の見出し（自分の写真か、お店の紹介写真か）
+    static func label(index: Int, shop: PlaceCandidate, count: Int, mine: Bool) -> String {
+        let far = shop.hasDistance ? "（\(Int(shop.distance.rounded()))m）" : ""
+        let what = mine ? "で、この人が前に撮った写真" : "の紹介写真"
+        return "候補 \(index): \(shop.name)\(far)\(what)（\(count) 枚）"
     }
 
     private static func block(_ data: Data) -> [String: Any] {

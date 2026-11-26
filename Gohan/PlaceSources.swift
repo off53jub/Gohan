@@ -180,8 +180,25 @@ enum HotPepper {
             let pc = (photo?["pc"] as? [String: Any])?["l"] as? String
             let mobile = (photo?["mobile"] as? [String: Any])?["l"] as? String
             c.photo = pc ?? mobile ?? ""
+            // どんなお店か の一言（お店の紹介文。無ければジャンルの紹介文）。AI に見せるだけで、保存はしない（2026-11-26 案6）
+            let genreCatch = (s["genre"] as? [String: Any])?["catch"] as? String ?? ""
+            let sub = (s["sub_genre"] as? [String: Any])?["name"] as? String ?? ""
+            c.note = note(shop: s["catch"] as? String ?? "", genre: genreCatch, sub: sub)
             return c
         }
+    }
+
+    /// 紹介文を 1 行・60 字までにする（改行やタグを外す）
+    static func note(shop: String, genre: String, sub: String) -> String {
+        func tidy(_ text: String) -> String {
+            text.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
+                .components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }.joined(separator: " ")
+        }
+        var parts: [String] = []
+        if !tidy(sub).isEmpty { parts.append(tidy(sub)) }
+        let main = tidy(shop).isEmpty ? tidy(genre) : tidy(shop)
+        if !main.isEmpty { parts.append(main) }
+        return String(parts.joined(separator: "・").prefix(60))
     }
 }
 

@@ -62,6 +62,39 @@ enum VisitLog {
     private static func span(_ v: Visit, now: Date) -> TimeInterval {
         (v.departure ?? now).timeIntervalSince(v.arrival ?? now)
     }
+
+    // MARK: - 訪問で食事を区切る（2026-11-26 案4）
+
+    /// 2 枚の写真のあいだに、場所を移ったか
+    enum Link: Equatable { case sameStay, moved, unknown }
+
+    /// 家・職場・大きな建物のような長い滞在は、食事の区切りに使わない（中で何回も食べるかもしれない）
+    static let longestStay: TimeInterval = 4 * 3600
+
+    /// その時刻にいた所（重なる訪問のうち、いちばん短いもの）。前後 3 分はおまけする
+    static func containing(_ visits: [Visit], date: Date, now: Date = Date()) -> Visit? {
+        let slack: TimeInterval = 3 * 60
+        let hits = visits.filter { v in
+            guard let arrival = v.arrival else { return false }
+            if v.departure == nil, date.timeIntervalSince(arrival) > 12 * 3600 { return false }
+            let departure = v.departure ?? now
+            return arrival <= date.addingTimeInterval(slack) && departure >= date.addingTimeInterval(-slack)
+        }
+        return hits.min { span($0, now: now) < span($1, now: now) }
+    }
+
+    /// 2 つの時刻が、同じ滞在の中か（sameStay）・別の所の滞在か（moved）・訪問の記録からは分からないか（unknown）
+    static func link(_ visits: [Visit], _ a: Date, _ b: Date, now: Date = Date()) -> Link {
+        guard !visits.isEmpty, let va = containing(visits, date: a, now: now), let vb = containing(visits, date: b, now: now) else {
+            return .unknown
+        }
+        if va == vb {
+            return span(va, now: now) <= longestStay ? .sameStay : .unknown
+        }
+        // 別の訪問でも、ほぼ同じ所（60m 以内）なら、記録が途中で切れただけかもしれないので決めつけない
+        let apart = Matcher.distance(va.latitude, va.longitude, vb.latitude, vb.longitude)
+        return apart > 60 ? .moved : .unknown
+    }
 }
 
 extension Matcher {

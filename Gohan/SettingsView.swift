@@ -253,6 +253,13 @@ struct AdvancedSettingsView: View {
     @State private var companions = ScanSettings.companions
     @State private var imageSearch = AISettings.imageSearch
     @State private var escalate = AISettings.escalate
+    @State private var ownPhotos = AISettings.ownPhotos
+    @State private var retroFix = AISettings.retroFix
+    @State private var zoomText = AISettings.zoomText
+    @State private var visitGroups = ScanSettings.visitGroups
+    @State private var genreSearch = AISettings.genreSearch
+    @State private var direction = AISettings.direction
+    @State private var shopMenu = AISettings.shopMenu
     @State private var confirmReset = false
     @State private var giving = false
     @State private var webCheck = AISettings.webCheck
@@ -276,9 +283,31 @@ struct AdvancedSettingsView: View {
         let more = "OpenStreetMap \(Metrics.value("osmCalls"))/\(OSMPlaces.monthlyCap) 回"
         let paid = "クチコミ \(Metrics.value("reviewChecks"))/\(ReviewMatch.monthlyCap) 軒・Google のお店を見つけ直した \(Metrics.value("placesRehomed")) 軒"
         lines.append(more + "・" + paid)
+        let own = "過去の写真から候補 \(Metrics.value("ownPhotoHints")) 回・さかのぼって埋めた \(Metrics.value("retroFills")) 食"
+        let zoom = "字を切り出した \(Metrics.value("textZooms")) 枚・種類で探し直した \(Metrics.value("genreSearches")) 回"
+        let menu = "名物を調べた \(Metrics.value("shopMenus"))/\(ShopMenu.monthlyCap) 軒（料理名を直した \(Metrics.value("dishRenames")) 食）"
+        lines.append(own + "・" + zoom + "・" + menu)
         if let p = GooglePlaces.lastProblem { lines.append("Google の最後の失敗: " + p) }
         if let p = ImageSearch.lastProblem { lines.append("画像検索の最後の失敗: " + p) }
         return lines.joined(separator: "\n")
+    }
+
+    /// 2026-11-26 に足した精度の施策の切り替え（本人「1・2・3・4・5・6・9・10」）
+    private var accuracySwitches: some View {
+        Section {
+            Toggle("前に行ったお店の写真と見比べる", isOn: $ownPhotos).onChange(of: ownPhotos) { _, new in AISettings.ownPhotos = new }
+            Toggle("お店が分かったら、同じ場所の昔の迷いも埋める", isOn: $retroFix).onChange(of: retroFix) { _, new in AISettings.retroFix = new }
+            Toggle("小さな字を大きく切り出して AI に見せる", isOn: $zoomText).onChange(of: zoomText) { _, new in AISettings.zoomText = new }
+            Toggle("訪問の記録で食事を区切る", isOn: $visitGroups).onChange(of: visitGroups) { _, new in ScanSettings.visitGroups = new }
+            Toggle("料理の種類で近くを探し直す", isOn: $genreSearch).onChange(of: genreSearch) { _, new in AISettings.genreSearch = new }
+            Toggle("写真の向きと高さを手がかりにする", isOn: $direction).onChange(of: direction) { _, new in AISettings.direction = new }
+            Toggle("はじめてのお店は名物を調べて料理名を合わせる（月 \(ShopMenu.monthlyCap) 軒まで）", isOn: $shopMenu)
+                .onChange(of: shopMenu) { _, new in AISettings.shopMenu = new }
+        } header: {
+            Text("精度の施策（2026-11-26）")
+        } footer: {
+            Text("似ているかの線・字の大きさの線・食事の間の長さは、まだ実際の写真で測っていない仮の値です。名物を調べるのは 1 軒につき 1 回で、費用はまだ測っていません。")
+        }
     }
 
     var body: some View {
@@ -361,6 +390,7 @@ struct AdvancedSettingsView: View {
             } footer: {
                 Text("ネットで確かめるのは、お店の自信が低いときだけです（1 回 数円）。")
             }
+            accuracySwitches
             Section {
                 if hasGoogle {
                     LabeledContent("Google", value: "使っています")

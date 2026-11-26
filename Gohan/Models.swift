@@ -34,6 +34,9 @@ final class Place {
     var googleID: String = ""
     /// Google から名前・位置を取ってきた日（Google のお店は、Apple などで見つけ直せなければ 30 日以内に取り直す）
     var googleFetchedAt: Date?
+    /// ネットで調べた、このお店の料理の名前（看板メニュー。はじめて来たときに 1 回だけ調べる。2026-11-26 案10）
+    var menuNames: [String] = []
+    var menuCheckedAt: Date?
 
     /// Google から取ってきたお店（見つけ直して置きかえる対象）
     var fromGoogle: Bool { category.hasPrefix("google:") }
@@ -228,6 +231,19 @@ struct PlaceCandidate: Codable, Hashable, Identifiable {
     var googleID: String = ""
     /// 写真を撮った時刻に閉まっていたはず（その場で付ける印）
     var closedThen: Bool = false
+    // ここから下は、その場かぎりの手がかり（保存しない。2026-11-26）
+    /// どんなお店か の一言（ホットペッパーの紹介文・OpenStreetMap の料理の種類・前に調べた料理名。案6）
+    var note: String = ""
+    /// 前にここで撮った写真と、今回の写真が似ている（端末の中で比べた。案1）
+    var alike: Bool = false
+    /// 看板などの写真を撮ったとき、カメラが向いていた先にある（案9）
+    var facing: Bool = false
+
+    /// 保存する項目（note・alike・facing は入れない。ホットペッパーの紹介文は、決まりで長く置けないため）
+    enum CodingKeys: String, CodingKey {
+        case name, address, category, latitude, longitude, distance, score, visited, phone, url, textHit
+        case hours, closedDays, photo, morePhotos, googleID, closedThen
+    }
 
     var id: String { key }
     var key: String { Self.key(name: name, latitude: latitude, longitude: longitude) }
