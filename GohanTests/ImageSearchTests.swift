@@ -1,3 +1,4 @@
+import SwiftData
 import XCTest
 @testable import Gohan
 
@@ -42,11 +43,29 @@ final class ImageSearchTests: XCTestCase {
 
     func testGooglePlacesKeepsSeveralPhotos() {
         let json = """
-        {"places":[{"displayName":{"text":"麺屋こもれび"},"location":{"latitude":35.69,"longitude":139.70},
+        {"places":[{"id":"ChIJabc","displayName":{"text":"麺屋こもれび"},"location":{"latitude":35.69,"longitude":139.70},
           "photos":[{"name":"p/1"},{"name":"p/2"},{"name":"p/3"}]}]}
         """
         let list = GooglePlaces.parse(Data(json.utf8), latitude: 35.69, longitude: 139.70)
         XCTAssertEqual(list.first?.photo, "p/1")
         XCTAssertEqual(list.first?.morePhotos, ["p/2", "p/3"])
+        // Google の決まりで、ずっと残してよいのは place ID だけ（見つけ直しに使う）
+        XCTAssertEqual(list.first?.googleID, "ChIJabc")
+    }
+
+    @MainActor
+    func testGooglePlaceKeepsItsIDAndIsMarked() throws {
+        let container = try ModelContainer(for: Place.self, Meal.self, configurations: ModelConfiguration(isStoredInMemoryOnly: true))
+        let context = ModelContext(container)
+        var c = PlaceCandidate(name: "麺屋こもれび", address: "", category: "google:ramen_restaurant", latitude: 35.69, longitude: 139.70, distance: 0)
+        c.googleID = "ChIJabc"
+        let place = Place(candidate: c, date: Date())
+        context.insert(place)
+        XCTAssertTrue(place.fromGoogle)
+        XCTAssertEqual(place.googleID, "ChIJabc")
+        XCTAssertEqual(place.candidate.googleID, "ChIJabc")
+        let apple = Place(candidate: PlaceCandidate(name: "a", address: "", category: "MKPOICategoryRestaurant", latitude: 0, longitude: 0, distance: 0), date: Date())
+        context.insert(apple)
+        XCTAssertFalse(apple.fromGoogle)
     }
 }

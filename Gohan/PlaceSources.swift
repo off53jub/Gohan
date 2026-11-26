@@ -54,7 +54,7 @@ extension PlaceFinder {
 /// Google のお店の情報（Places API (New)）
 enum GooglePlaces {
     // 電話番号でもう上の料金の段なので、営業時間と写真を足しても段は変わらない（写真そのものを取るときは別料金）
-    static let fields = "places.displayName,places.formattedAddress,places.location,places.primaryType,places.nationalPhoneNumber,places.regularOpeningHours,places.photos"
+    static let fields = "places.id,places.displayName,places.formattedAddress,places.location,places.primaryType,places.nationalPhoneNumber,places.regularOpeningHours,places.photos"
 
     static func nearby(latitude: Double, longitude: Double, radius: Double) async -> [PlaceCandidate] {
         let body: [String: Any] = [
@@ -127,6 +127,7 @@ enum GooglePlaces {
             var c = PlaceCandidate(name: name, address: address, category: "google:" + (p["primaryType"] as? String ?? ""),
                                    latitude: lat, longitude: lon, distance: Matcher.distance(latitude, longitude, lat, lon),
                                    phone: p["nationalPhoneNumber"] as? String ?? "")
+            c.googleID = p["id"] as? String ?? ""
             if let periods = (p["regularOpeningHours"] as? [String: Any])?["periods"] as? [[String: Any]] {
                 c.hours = OpenHours.googleText(periods)
             }

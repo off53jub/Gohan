@@ -121,9 +121,12 @@ enum OSMPlaces {
 /// Foursquare Places API（新しい places-api.foursquare.com）。迷ったときだけ・月の上限つき
 enum FoursquarePlaces {
     static let monthlyCap = 300
+    /// 使わない（2026-11-26）。従量課金の決まりでは、保存してよいのは ID だけで、店名・位置は保存できない。
+    /// ごはん帖は決まったお店の名前と位置を記録に残すので、合わない
+    static let allowed = false
 
     static func nearby(latitude: Double, longitude: Double, radius: Double) async -> [PlaceCandidate] {
-        guard let key = KeyStore.foursquareKey, Metrics.value("foursquareCalls") < monthlyCap,
+        guard allowed, let key = KeyStore.foursquareKey, Metrics.value("foursquareCalls") < monthlyCap,
               var c = URLComponents(string: "https://places-api.foursquare.com/places/search") else { return [] }
         c.queryItems = [
             URLQueryItem(name: "ll", value: "\(latitude),\(longitude)"),
