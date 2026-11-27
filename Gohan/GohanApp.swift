@@ -44,6 +44,13 @@ struct RootView: View {
     @State private var undo = UndoCenter.shared
     @State private var locked = FaceLock.enabled
     @State private var importMessage: String?
+    /// 共有ボタンから届いた文（大18）
+    @State private var shared: SharedText?
+
+    struct SharedText: Identifiable {
+        let id = UUID()
+        let text: String
+    }
 
     var body: some View {
         Group {
@@ -87,6 +94,8 @@ struct RootView: View {
                 if onboarded { LocationWatch.shared.askAlwaysOnce() }
                 if onboarded, ScanSettings.auto { Task { await scanner.scan() } }
                 _ = Backup.remapMissing(context: context)
+                if onboarded { takeShared() }
+                Task { await WidgetFeed.write(context: context) }
             }
             if new == .background {
                 Scanner.scheduleBackground()
@@ -101,6 +110,7 @@ struct RootView: View {
                 router.openMeal = uuid
             }
         }
+        .sheet(item: $shared) { AddWishView(initial: $0.text) }
         .alert("ふたり帖", isPresented: Binding(get: { importMessage != nil }, set: { if !$0 { importMessage = nil } })) {
             Button("OK") { importMessage = nil }
         } message: {
@@ -108,8 +118,28 @@ struct RootView: View {
         }
     }
 
+    /// 共有ボタンから届いた分を、行ってみたいの画面で開く（大18）
+    private func takeShared() {
+        let texts = ShareInbox.take()
+        guard let last = texts.last else { return }
+        router.tab = .want
+        shared = SharedText(text: last)
+    }
+
     /// .gohan（ふたり帖）や バックアップのファイルを開いたとき
     private func open(_ url: URL) {
+        if url.scheme == "gohan" {
+            // ホーム画面の小窓から（大19）
+            if url.host == "meal", let id = UUID(uuidString: url.lastPathComponent) {
+                router.tab = .log
+                router.openMeal = id
+            } else if url.host == "place",
+                      let key = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "key" })?.value {
+                router.tab = .want
+                router.openPlace = key
+            }
+            return
+        }
         if url.pathExtension == "gohan" {
             do {
                 let count = try PartnerStore.shared.receive(url, context: context)

@@ -131,6 +131,9 @@ final class Scanner {
         Habits.refresh(context: context)
         MonthlyNote.sendIfDue(context: context)
 
+        // 3.6 ホーム画面の小窓（大19）
+        await WidgetFeed.write(context: context)
+
         // 4. 後片づけ（検索・バックアップ・閉店チェック・近くに来たら）
         Spotlight.index(added)
         for meal in added { Backup.fillCloudIDs(meal) }
