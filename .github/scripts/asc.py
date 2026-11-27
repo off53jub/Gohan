@@ -166,12 +166,13 @@ def wait_upload(number: str) -> None:
                 for w in state.get("warnings", []):
                     print(f"::warning::Apple からの注意（ITMS-{w.get('code')}）: {w.get('description')}")
                 print("Apple が受け付けました")
-                on_main = os.environ.get("GITHUB_REF") == "refs/heads/main" \
-                    and os.environ.get("GITHUB_EVENT_NAME") in ("push", "workflow_dispatch", "schedule")
-                if on_main:
+                # ういちゃん（グループ「ういきょ」）には、Actions 画面で「ういちゃんにも渡す」を選んで手で動かしたときだけ渡す。
+                # main に入るたびに渡すと、毎回メールが届いてしまう（2026-11-27 本人「一刻も早くやめたい」）
+                on_main = os.environ.get("GITHUB_REF") == "refs/heads/main"
+                if on_main and os.environ.get("GIVE_PARTNER") == "true":
                     give_to_testers(app, number)
                 else:
-                    print("main ではないので、テスターには渡しません（TestFlight の一覧には出ます）")
+                    print("ういちゃんのグループには渡しません（本人のグループ「自分」には自動で届きます）")
                 return
         time.sleep(60)
     print("::warning::35 分待っても受け付けの結果が出ませんでした。App Store Connect の TestFlight を見てください")
