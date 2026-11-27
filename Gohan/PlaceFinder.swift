@@ -36,6 +36,21 @@ enum PlaceFinder {
         }
     }
 
+    /// 場所の分からない食事のために、日本の中を名前で探す（「神保町 黒須」など。大1・2026-11-28）
+    static func searchAnywhere(_ query: String) async -> [PlaceCandidate] {
+        let center = CLLocationCoordinate2D(latitude: 36.2, longitude: 138.25)
+        let request = MKLocalSearch.Request()
+        request.naturalLanguageQuery = query
+        request.region = MKCoordinateRegion(center: center, span: MKCoordinateSpan(latitudeDelta: 20, longitudeDelta: 20))
+        request.resultTypes = .pointOfInterest
+        do {
+            let response = try await MKLocalSearch(request: request).start()
+            return response.mapItems.compactMap { candidate($0, from: center) }
+        } catch {
+            return []
+        }
+    }
+
     private static func candidate(_ item: MKMapItem, from center: CLLocationCoordinate2D) -> PlaceCandidate? {
         guard let name = item.name, !name.isEmpty else { return nil }
         let coordinate = item.placemark.coordinate

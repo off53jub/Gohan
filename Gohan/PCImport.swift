@@ -41,6 +41,8 @@ struct ImportPlace: Codable, Equatable {
     var longitude: Double?
     var confidence: Double
     var reason: String
+    /// 街の名前（「神保町 黒須」の「神保町」。場所の無い食事を、名前と街で探すため。大1・2026-11-28）
+    var area: String? = nil
 }
 
 struct ImportPhoto: Codable, Equatable {
@@ -249,6 +251,25 @@ enum PCImport {
         /// PC から前に入れた食事に、写真を足した数・ジャンルを直した数（入れ直したとき）
         var photosAdded = 0
         var genresFixed = 0
+        /// PC が付けた店名（インスタの投稿など）で、お店を入れた数（大1）
+        var placesFilled = 0
+    }
+
+    /// 探して見つかったお店から、店名のいちばん合うもの（合い方 0.6 以上。同じくらいなら街の名前が住所にあるほう）
+    static func bestNamed(_ found: [PlaceCandidate], name: String, area: String?) -> PlaceCandidate? {
+        let core = Matcher.coreName(name)
+        func score(_ c: PlaceCandidate) -> Double {
+            var s = Matcher.similarity(Matcher.coreName(c.name), core)
+            if let area, !area.isEmpty, c.address.contains(area) { s += 0.05 }
+            return s
+        }
+        // 駅や公園などは外す（「神保町」だけで探すと駅が出る）
+        let foodish = ["", "MKPOICategoryRestaurant", "MKPOICategoryCafe", "MKPOICategoryBakery", "MKPOICategoryFoodMarket",
+                       "MKPOICategoryNightlife", "MKPOICategoryBrewery", "MKPOICategoryWinery"]
+        let shops = found.filter { foodish.contains($0.category) || Matcher.candidateGenre($0) != nil }
+        guard let best = shops.max(by: { score($0) < score($1) }),
+              Matcher.similarity(Matcher.coreName(best.name), core) >= 0.6 else { return nil }
+        return best
     }
 
     static func decode(_ data: Data) throws -> ImportFile {
@@ -314,6 +335,7 @@ extension Scanner {
                     let changed = refreshFromPC(meal, with: item, seen: &seen)
                     result.photosAdded += changed.photos
                     if changed.genre { result.genresFixed += 1 }
+                    if await fillPlaceFromPC(meal, with: item, context: context) { result.placesFilled += 1 }
                 } else {
                     result.skipped += 1
                 }
@@ -355,6 +377,37 @@ extension Scanner {
         SeenStore.save(seen)
         try? context.save()
         return result
+    }
+
+    /// PC が付けた店名（インスタの投稿など）で、お店の無い食事・「たぶん」の食事を埋める（大1。2026-11-28）。
+    /// 本人が直した食事・おうちや職場・お店ではない食事は触らない。地図の検索は Apple（場所が無ければ街と名前で）
+    func fillPlaceFromPC(_ meal: Meal, with item: ImportMeal, context: ModelContext) async -> Bool {
+        guard let wanted = item.place, wanted.confidence >= 0.4, !wanted.name.isEmpty,
+              meal.eatenOut, meal.spot.isEmpty, !meal.hidden,
+              meal.place == nil || (meal.needsCheck && meal.confidence < wanted.confidence) else { return false }
+        if let current = meal.place, Matcher.similarity(Matcher.coreName(current.name), Matcher.coreName(wanted.name)) >= 0.6 { return false }
+        let found: [PlaceCandidate]
+        if let lat = meal.latitude ?? wanted.latitude, let lon = meal.longitude ?? wanted.longitude {
+            found = await PlaceFinder.searchAll(wanted.name, latitude: lat, longitude: lon, radius: 1500)
+        } else {
+            found = await PlaceFinder.searchAnywhere([wanted.area ?? "", wanted.name].filter { !$0.isEmpty }.joined(separator: " "))
+        }
+        // Apple のマップの検索は 1 分に約 50 回まで
+        try? await Task.sleep(for: .seconds(1.5))
+        guard let best = PCImport.bestNamed(found, name: wanted.name, area: wanted.area) else { return false }
+        meal.place = PlaceBook.place(for: best, date: meal.date, context: context)
+        meal.eatenOut = true
+        meal.confidence = wanted.confidence
+        meal.reason = wanted.reason
+        meal.needsCheck = wanted.confidence < Matcher.sureLine
+        var list = meal.candidates
+        if !list.contains(where: { $0.key == best.key }) {
+            list.insert(best, at: 0)
+            meal.candidates = list
+        }
+        if !meal.source.contains("+insta") { meal.source += "+insta" }
+        Metrics.count("instaPlaces")
+        return true
     }
 
     /// PC から前に入れた食事を、新しいファイルの中身で直す（写真を足す・ジャンルを直す）。地図も AI も呼ばない
@@ -504,6 +557,7 @@ struct PCImportView: View {
                 total.fromFile += r.fromFile
                 total.photosAdded += r.photosAdded
                 total.genresFixed += r.genresFixed
+                total.placesFilled += r.placesFilled
             } catch {
                 message = "読めませんでした（\(url.lastPathComponent)）"
                 return
@@ -512,5 +566,6 @@ struct PCImportView: View {
         message = "\(total.added) 食を足しました（もうあった \(total.skipped)・食事ではない \(total.notMeal)）。写真は 写真アプリから \(total.fromLibrary) 枚・ファイルから \(total.fromFile) 枚。"
             + (total.photosAdded + total.genresFixed > 0
                ? "前に入れた食事に写真を \(total.photosAdded) 枚足し、ジャンルを \(total.genresFixed) 件直しました。" : "")
+            + (total.placesFilled > 0 ? "店名から \(total.placesFilled) 食にお店を入れました。" : "")
     }
 }
