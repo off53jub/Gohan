@@ -131,6 +131,15 @@ enum Notifier {
         post(title: "ごはん帖", body: "これまでの写真から \(meals) 食みつけました", id: "initial-done")
     }
 
+    /// 月のはじめに「先月のごはん」（大20）
+    static func tellMonth(title: String, body: String) {
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = body
+        content.userInfo = ["stats": "1"]
+        UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: "month-\(title)", content: content, trigger: nil))
+    }
+
     static func tellNear(name: String, detail: String, key: String) {
         let content = UNMutableNotificationContent()
         content.title = "\(name) の近くです"

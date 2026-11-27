@@ -126,6 +126,11 @@ final class Scanner {
         await retryPending(context: context)
         await runBatches(context: context)
 
+        // 3.5 大型アップデート（2026-11-28）: お店が空の昔の食事を種類で探し直す・くせを数え直す・月のはじめの知らせ
+        await RetroSearch.run(context: context)
+        Habits.refresh(context: context)
+        MonthlyNote.sendIfDue(context: context)
+
         // 4. 後片づけ（検索・バックアップ・閉店チェック・近くに来たら）
         Spotlight.index(added)
         for meal in added { Backup.fillCloudIDs(meal) }
@@ -393,7 +398,8 @@ final class Scanner {
         }
         var ranked = Matcher.rank(candidates, lines: lines + receipt, dishLabel: label)
         // 2. 撮った時刻に閉まっていたはずのお店は下げる
-        ranked = Matcher.applyHours(Matcher.applyGenre(ranked, photoGenre: photoGuess?.genre), at: first.date)
+        ranked = Matcher.applyHours(Habits.apply(Matcher.applyGenre(ranked, photoGenre: photoGuess?.genre),
+                                                 photoGenre: photoGuess?.genre, habit: Habits.topGenre), at: first.date)
         // 案1・案9: 写真が似ているお店・看板の写真が向いていた先のお店を、少し上へ
         ranked = Matcher.applyDirection(Matcher.applyAlike(ranked), shots: shots)
         ranked = Array(ranked.prefix(indoor ? 20 : 12))

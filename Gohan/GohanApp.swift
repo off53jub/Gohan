@@ -23,6 +23,7 @@ struct GohanApp: App {
         LocationWatch.shared.start()
         NotificationRouter.shared.start()
         PartnerStore.shared.load()
+        Slowness.shared.start()
     }
 
     var body: some Scene {
@@ -49,12 +50,15 @@ struct RootView: View {
             if onboarded {
                 TabView(selection: $router.tab) {
                     TimelineView()
+                        .onAppear { Slowness.shared.appeared("きろく") }
                         .tabItem { Label("きろく", systemImage: "book.closed") }
                         .tag(Router.Tab.log)
                     WantView()
+                        .onAppear { Slowness.shared.appeared("また行きたい") }
                         .tabItem { Label("また行きたい", systemImage: "heart") }
                         .tag(Router.Tab.want)
                     PlacesMapView()
+                        .onAppear { Slowness.shared.appeared("地図") }
                         .tabItem { Label("地図", systemImage: "map") }
                         .tag(Router.Tab.map)
                 }
@@ -89,6 +93,7 @@ struct RootView: View {
                 if FaceLock.enabled { locked = true }
             }
         }
+        .onChange(of: router.tab) { _, _ in Slowness.shared.mark() }
         .onOpenURL { url in open(url) }
         .onContinueUserActivity(CSSearchableItemActionType) { activity in
             if let id = activity.userInfo?[CSSearchableItemActivityIdentifier] as? String, let uuid = UUID(uuidString: id) {

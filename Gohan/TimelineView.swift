@@ -18,6 +18,8 @@ struct TimelineView: View {
     }
 
     var body: some View {
+        // 日ごとの段で毎回数え直さないよう、1 回だけ数える（大23。2026-11-28）
+        let tripList = trips
         NavigationStack(path: $path) {
             ScrollViewReader { proxy in
                 ScrollView {
@@ -37,7 +39,7 @@ struct TimelineView: View {
                             MonthDoor(month: month) { sheet = .calendar }
                                 .id("month-\(month.id)")
                             ForEach(month.days) { day in
-                                DayBlock(day: day, trips: trips, open: { path.append($0) })
+                                DayBlock(day: day, trips: tripList, open: { path.append($0) })
                             }
                         }
                         if meals.isEmpty && !scanner.isRunning {
