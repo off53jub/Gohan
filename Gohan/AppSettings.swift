@@ -4,6 +4,23 @@ import Network
 import UIKit
 
 /// 読む設定
+/// 写真の出し方（作る人のメニュー。2026-11-27）
+enum PhotoSettings {
+    private static let d = UserDefaults.standard
+    /// 選べる、表示用に覚えておく絵の上限（MB）
+    static let memoryChoices = [60, 120, 200, 300]
+    static let defaultMemoryMB = 120
+
+    /// 表示用に覚えておく絵の上限（MB）。選べる値でなければ初めの値
+    static var memoryMB: Int {
+        get {
+            let v = d.integer(forKey: "photo.memoryMB")
+            return memoryChoices.contains(v) ? v : defaultMemoryMB
+        }
+        set { d.set(newValue, forKey: "photo.memoryMB") }
+    }
+}
+
 enum ScanSettings {
     private static let d = UserDefaults.standard
 

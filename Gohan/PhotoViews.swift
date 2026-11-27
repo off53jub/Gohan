@@ -15,14 +15,17 @@ final class ThumbCache {
     nonisolated static let steps: [CGFloat] = [160, 320, 512, 800, 1200, 2400]
     /// これより大きい絵（全画面で拡大する絵）は覚えない（1 枚で 20MB ほどになるため）
     nonisolated static let keepUpTo: CGFloat = 1200
-    /// 覚えておく絵の合計（メモリ）
-    nonisolated static let memoryLimit = 120 * 1024 * 1024
-
     init() {
         cache.countLimit = 400
-        cache.totalCostLimit = Self.memoryLimit
+        cache.totalCostLimit = PhotoSettings.memoryMB * 1_048_576
         NotificationCenter.default.addObserver(forName: UIApplication.didReceiveMemoryWarningNotification,
                                                object: nil, queue: .main) { [cache] _ in cache.removeAllObjects() }
+    }
+
+    /// 覚えておく量を変える（作る人のメニュー。小さくしたら、はみ出た分はすぐ忘れる）
+    func setMemory(mb: Int) {
+        PhotoSettings.memoryMB = mb
+        cache.totalCostLimit = PhotoSettings.memoryMB * 1_048_576
     }
 
     nonisolated static func step(_ side: CGFloat) -> CGFloat { steps.first { $0 >= side } ?? steps[steps.count - 1] }

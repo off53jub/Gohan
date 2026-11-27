@@ -15,6 +15,16 @@ final class PhotoWeightTests: XCTestCase {
         XCTAssertEqual(ThumbCache.step(5000), 2400)
     }
 
+    func testMemorySettingFallsBackToDefault() {
+        let old = PhotoSettings.memoryMB
+        defer { PhotoSettings.memoryMB = old }
+        PhotoSettings.memoryMB = 200
+        XCTAssertEqual(PhotoSettings.memoryMB, 200)
+        // 選べない値は初めの値に戻す
+        PhotoSettings.memoryMB = 7
+        XCTAssertEqual(PhotoSettings.memoryMB, PhotoSettings.defaultMemoryMB)
+    }
+
     func testCostCountsPixels() {
         let format = UIGraphicsImageRendererFormat()
         format.scale = 2

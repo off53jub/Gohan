@@ -260,6 +260,7 @@ struct AdvancedSettingsView: View {
     @State private var genreSearch = AISettings.genreSearch
     @State private var direction = AISettings.direction
     @State private var shopMenu = AISettings.shopMenu
+    @State private var memoryMB = PhotoSettings.memoryMB
     @State private var confirmReset = false
     @State private var giving = false
     @State private var webCheck = AISettings.webCheck
@@ -391,6 +392,16 @@ struct AdvancedSettingsView: View {
                 Text("ネットで確かめるのは、お店の自信が低いときだけです（1 回 数円）。")
             }
             accuracySwitches
+            Section {
+                Picker("覚えておく写真の量", selection: $memoryMB) {
+                    ForEach(PhotoSettings.memoryChoices, id: \.self) { Text("\($0) MB").tag($0) }
+                }
+                .onChange(of: memoryMB) { _, new in ThumbCache.shared.setMemory(mb: new) }
+            } header: {
+                Text("写真の出し方")
+            } footer: {
+                Text("一覧をなめらかに出すため、読んだ写真を iPhone のメモリに少し覚えておきます。小さくすると軽くなりますが、戻ったときに読み直すことが増えます。全画面で拡大する写真は覚えません。iPhone のメモリが足りなくなったときは、この量に関係なく全部忘れます。初めは \(PhotoSettings.defaultMemoryMB) MB です。")
+            }
             Section {
                 if hasGoogle {
                     LabeledContent("Google", value: "使っています")
