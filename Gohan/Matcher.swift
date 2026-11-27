@@ -293,7 +293,8 @@ enum Matcher {
 
     /// 距離・写真の文字・前に行ったか・種類で点を付け、高い順に並べる
     static func rank(_ candidates: [PlaceCandidate], lines: [String], dishLabel: String) -> [PlaceCandidate] {
-        candidates.map { c in
+        // コンビニは外食のお店の候補にしない（2026-11-27。当たり具合の記録でファミリーマート・セブンイレブンを選んでいた）
+        candidates.filter { !isConvenienceStore($0.name) }.map { c in
             var c = c
             let near = exp(-max(0, c.distance) / 90)
             let text = textMatch(name: c.name, lines: lines)
@@ -303,6 +304,16 @@ enum Matcher {
             return c
         }
         .sorted { $0.score > $1.score }
+    }
+
+    /// コンビニの名前
+    static let convenienceNames = ["ファミリーマート", "ファミマ", "セブンイレブン", "セブン-イレブン", "セブン‐イレブン", "7-eleven", "7-11",
+                                   "ローソン", "lawson", "ミニストップ", "ministop", "デイリーヤマザキ", "ヤマザキショップ",
+                                   "ニューデイズ", "newdays", "セイコーマート", "ポプラ", "familymart"]
+
+    static func isConvenienceStore(_ name: String) -> Bool {
+        let n = name.lowercased().replacingOccurrences(of: " ", with: "").replacingOccurrences(of: "　", with: "")
+        return convenienceNames.contains { n.contains($0.lowercased()) }
     }
 
     /// 料理の見た目とお店の種類が合うか（カフェで撮ったケーキ、など）
