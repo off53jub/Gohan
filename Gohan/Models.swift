@@ -162,13 +162,22 @@ final class Meal {
         set { candidatesData = (try? JSONEncoder().encode(newValue)) ?? Data() }
     }
 
+    /// お店も街も分からない外食の見出し（大7）
+    static func quietTitle(dishes: [String], genre: String) -> String {
+        if let dish = dishes.first(where: { !$0.isEmpty }) { return dish }
+        if !genre.isEmpty, genre != "その他" { return genre }
+        return "外で食べたごはん"
+    }
+
     /// 一覧の見出し
     var title: String {
         if let place { return place.name }
         if spot == "home" { return "おうちごはん" }
         if spot == "work" { return "職場で" }
         if !eatenOut { return area.isEmpty ? "おうち・持ち帰り" : "おうち・持ち帰り（\(area)）" }
-        return area.isEmpty ? "お店が分かりません" : "\(area)のどこか"
+        if !area.isEmpty { return "\(area)のどこか" }
+        // お店も街も分からないときは「分かりません」と書かず、食べたものを見出しにする（大7。2026-11-28）
+        return Meal.quietTitle(dishes: dishes, genre: genre)
     }
 
     var dishText: String { dishes.isEmpty ? genre : dishes.joined(separator: "、") }

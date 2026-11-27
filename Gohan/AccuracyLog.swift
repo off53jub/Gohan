@@ -15,6 +15,10 @@ struct AccuracyEntry: Codable, Identifiable {
     var label: String = ""
     var before: String = ""
     var after: String = ""
+    /// 料理の種類（大9。2026-11-28 から）
+    var genre: String?
+    /// そのときの候補ごとの点の内訳（上から 8 軒。大9。2026-11-28 から。古い行は nil）
+    var features: [CandidateFeature]?
 }
 
 enum AccuracyLog {
@@ -31,13 +35,16 @@ enum AccuracyLog {
         all.append(entry)
         if all.count > 2000 { all.removeFirst(all.count - 2000) }
         if let data = try? JSONEncoder().encode(all) { try? data.write(to: url, options: .atomic) }
+        // 大12: 書き出し先が選んであれば、そちらにも上書きする
+        if AccuracySync.isSet { Task { await AccuracySync.push() } }
     }
 
     /// お店を直したとき（正しいお店が、元の候補の何番目だったか）
     static func placeFixed(_ meal: Meal, to right: PlaceCandidate, oldName: String?) {
         let n = Matcher.normalize(right.name)
         let rank = meal.candidates.firstIndex { $0.key == right.key || Matcher.normalize($0.name) == n } ?? -1
-        add(AccuracyEntry(kind: "place", source: meal.source, rank: rank, label: meal.visionLabel, before: oldName ?? "", after: right.name))
+        add(AccuracyEntry(kind: "place", source: meal.source, rank: rank, label: meal.visionLabel, before: oldName ?? "", after: right.name,
+                          genre: meal.genre, features: CandidateFeature.list(meal.candidates)))
     }
 
     static func notShop(_ meal: Meal) {
@@ -45,7 +52,10 @@ enum AccuracyLog {
     }
 
     static func hit(_ meal: Meal) {
-        add(AccuracyEntry(kind: "hit", source: meal.source, rank: 0, label: meal.visionLabel, before: meal.place?.name ?? "", after: meal.place?.name ?? ""))
+        let n = Matcher.normalize(meal.place?.name ?? "")
+        let rank = meal.candidates.firstIndex { Matcher.normalize($0.name) == n } ?? 0
+        add(AccuracyEntry(kind: "hit", source: meal.source, rank: rank, label: meal.visionLabel, before: meal.place?.name ?? "",
+                          after: meal.place?.name ?? "", genre: meal.genre, features: CandidateFeature.list(meal.candidates)))
     }
 
     static func genreFixed(_ meal: Meal, from old: String, to new: String) {
@@ -78,11 +88,15 @@ enum AccuracyLog {
     }
 
     /// 送れる形（本人が Claude に見せて、次の手を決めるため）
-    static func exportURL() -> URL? {
+    static func exportData() -> Data? {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         encoder.dateEncodingStrategy = .iso8601
-        guard let data = try? encoder.encode(load()) else { return nil }
+        return try? encoder.encode(load())
+    }
+
+    static func exportURL() -> URL? {
+        guard let data = exportData() else { return nil }
         let out = FileManager.default.temporaryDirectory.appendingPathComponent("ごはん帖の当たり具合.json")
         return (try? data.write(to: out, options: .atomic)) == nil ? nil : out
     }

@@ -392,6 +392,7 @@ struct AdvancedSettingsView: View {
                 Text("ネットで確かめるのは、お店の自信が低いときだけです（1 回 数円）。")
             }
             accuracySwitches
+            BigUpdateSection()
             Section {
                 Picker("覚えておく写真の量", selection: $memoryMB) {
                     ForEach(PhotoSettings.memoryChoices, id: \.self) { Text("\($0) MB").tag($0) }
