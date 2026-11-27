@@ -8,6 +8,11 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      give_partner:
+        description: "ういちゃんにも渡す（グループ「ういきょ」。ふだんは渡さない）"
+        type: boolean
+        default: false
   # TestFlight の版は 90 日で切れるので、毎月 2 日の朝 3 時（日本）に作り直して送る（便9）
   schedule:
     - cron: "0 18 1 * *"
@@ -176,13 +181,14 @@ jobs:
             -authenticationKeyID "$ASC_KEY_ID" \
             -authenticationKeyIssuerID "$ASC_ISSUER_ID"
 
-      # 送れても Apple の受け付けの検査で弾かれることがあるので、結果を待つ。main のときは内部テストのグループに渡す
+      # 送れても Apple の受け付けの検査で弾かれることがあるので、結果を待つ。ういちゃんのグループには、手で動かして選んだときだけ渡す
       - name: Apple の受け付け結果を待つ
         if: env.HAS_ASC == 'true' && env.ASC_UNUSABLE != 'true'
         timeout-minutes: 40
         env:
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          GIVE_PARTNER: ${{ github.event_name == 'workflow_dispatch' && inputs.give_partner }}
         run: ASC_KEY_PATH="$RUNNER_TEMP/asc/key.p8" "$RUNNER_TEMP/ascpy/bin/python" .github/scripts/asc.py wait-upload "${{ github.run_number }}"
 
       - name: この CI で作った証明書を片づける
