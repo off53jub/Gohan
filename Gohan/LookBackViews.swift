@@ -380,6 +380,12 @@ enum ReviewOrder {
         hasPlace ? 0 : (hasLocation ? 1 : 2)
     }
 
+    static func tier(of meal: Meal) -> Int {
+        let hasPlace: Bool = meal.place != nil
+        let hasLocation: Bool = meal.latitude != nil
+        return tier(hasPlace: hasPlace, hasLocation: hasLocation)
+    }
+
     /// 段の順に並べる。同じ段の中は、元の順（新しい順）のまま
     static func sorted<T>(_ items: [T], tier: (T) -> Int) -> [T] {
         items.enumerated()
@@ -399,7 +405,7 @@ struct ReviewView: View {
 
     /// お店を当てた食事を先に。お店が分からない食事（見ても分からないことが多い）は後ろへ（2026-11-27 本人）
     private var meals: [Meal] {
-        ReviewOrder.sorted(found) { ReviewOrder.tier(hasPlace: $0.place != nil, hasLocation: $0.latitude != nil) }
+        ReviewOrder.sorted(found, tier: ReviewOrder.tier(of:))
     }
 
     var body: some View {
