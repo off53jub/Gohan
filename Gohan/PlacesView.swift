@@ -569,6 +569,8 @@ struct PlacesMapView: View {
 
 /// 行ってみたいお店を足す（インスタ・マップ・食べログのリンクや文を貼る・名前で探す。便43）
 struct AddWishView: View {
+    /// 共有ボタンから届いた文（あれば、開いたらすぐ探す。大18）
+    var initial = ""
     @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
     @State private var text = ""
@@ -612,6 +614,11 @@ struct AddWishView: View {
                 }
             }
             .navigationTitle("行ってみたいお店")
+            .task {
+                guard !initial.isEmpty, text.isEmpty else { return }
+                text = initial
+                await find()
+            }
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("閉じる") { dismiss() } } }
         }

@@ -16,7 +16,15 @@ targets:
   Gohan:
     type: application
     platform: iOS
-    sources: [Gohan]
+    sources: [Gohan, Shared]
+    dependencies:
+      # ホーム画面の小窓と、共有ボタン（大18・大19。2026-11-28）
+      - target: GohanWidget
+      - target: GohanShare
+    entitlements:
+      path: Gohan/Gohan.entitlements
+      properties:
+        com.apple.security.application-groups: [group.com.off53jub.gohan]
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.off53jub.gohan
@@ -28,6 +36,10 @@ targets:
       properties:
         CFBundleDisplayName: ごはん帖
         CFBundleDevelopmentRegion: ja
+        # 小窓から食事・お店を開く（gohan://meal/… ・ gohan://place?key=…）
+        CFBundleURLTypes:
+          - CFBundleURLName: com.off53jub.gohan
+            CFBundleURLSchemes: [gohan]
         # CI が Secrets から入れる（無ければ空。端末で入れた鍵があればそちらを使う）
         HotPepperKey: $(HOTPEPPER_KEY)
         GooglePlacesKey: $(GOOGLE_PLACES_KEY)
@@ -61,6 +73,55 @@ targets:
             UTTypeConformsTo: [public.data, public.content]
             UTTypeTagSpecification:
               public.filename-extension: [gohan]
+  GohanWidget:
+    type: app-extension
+    platform: iOS
+    sources: [GohanWidget, Shared]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.off53jub.gohan.widget
+        TARGETED_DEVICE_FAMILY: "1"
+        GENERATE_INFOPLIST_FILE: NO
+        SKIP_INSTALL: YES
+    entitlements:
+      path: GohanWidget/GohanWidget.entitlements
+      properties:
+        com.apple.security.application-groups: [group.com.off53jub.gohan]
+    info:
+      path: GohanWidget/Info.plist
+      properties:
+        CFBundleDisplayName: ごはん帖
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+  GohanShare:
+    type: app-extension
+    platform: iOS
+    sources: [GohanShare, Shared]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.off53jub.gohan.share
+        TARGETED_DEVICE_FAMILY: "1"
+        GENERATE_INFOPLIST_FILE: NO
+        SKIP_INSTALL: YES
+    entitlements:
+      path: GohanShare/GohanShare.entitlements
+      properties:
+        com.apple.security.application-groups: [group.com.off53jub.gohan]
+    info:
+      path: GohanShare/Info.plist
+      properties:
+        CFBundleDisplayName: ごはん帖
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.share-services
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).ShareViewController
+          NSExtensionAttributes:
+            NSExtensionActivationRule:
+              NSExtensionActivationSupportsWebURLWithMaxCount: 1
+              NSExtensionActivationSupportsText: true
   GohanTests:
     type: bundle.unit-test
     platform: iOS
