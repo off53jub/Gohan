@@ -388,10 +388,13 @@ enum ReviewOrder {
 
     /// 段の順に並べる。同じ段の中は、元の順（新しい順）のまま
     static func sorted<T>(_ items: [T], tier: (T) -> Int) -> [T] {
-        items.enumerated()
-            .map { (index: $0.offset, tier: tier($0.element), item: $0.element) }
-            .sorted { $0.tier != $1.tier ? $0.tier < $1.tier : $0.index < $1.index }
-            .map(\.item)
+        // 段ごとに分けて、つなぐ（段の中は元の順のまま）
+        var groups: [[T]] = [[], [], []]
+        for item in items {
+            let t: Int = min(2, max(0, tier(item)))
+            groups[t].append(item)
+        }
+        return groups[0] + groups[1] + groups[2]
     }
 }
 
