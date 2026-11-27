@@ -12,11 +12,11 @@ final class ThumbCache {
     private var loading: [NSString: Task<UIImage?, Never>] = [:]
 
     /// 読む大きさの段（長い辺 px）。頼まれた大きさ以上の、いちばん近い段で読む
-    static let steps: [CGFloat] = [160, 320, 512, 800, 1200, 2400]
+    nonisolated static let steps: [CGFloat] = [160, 320, 512, 800, 1200, 2400]
     /// これより大きい絵（全画面で拡大する絵）は覚えない（1 枚で 20MB ほどになるため）
-    static let keepUpTo: CGFloat = 1200
+    nonisolated static let keepUpTo: CGFloat = 1200
     /// 覚えておく絵の合計（メモリ）
-    static let memoryLimit = 120 * 1024 * 1024
+    nonisolated static let memoryLimit = 120 * 1024 * 1024
 
     init() {
         cache.countLimit = 400
@@ -25,10 +25,10 @@ final class ThumbCache {
                                                object: nil, queue: .main) { [cache] _ in cache.removeAllObjects() }
     }
 
-    static func step(_ side: CGFloat) -> CGFloat { steps.first { $0 >= side } ?? steps[steps.count - 1] }
+    nonisolated static func step(_ side: CGFloat) -> CGFloat { steps.first { $0 >= side } ?? steps[steps.count - 1] }
 
     /// 絵がメモリで使う大きさ（1 画素 4 バイト）
-    static func cost(_ image: UIImage) -> Int {
+    nonisolated static func cost(_ image: UIImage) -> Int {
         Int(image.size.width * image.scale * image.size.height * image.scale * 4)
     }
 
