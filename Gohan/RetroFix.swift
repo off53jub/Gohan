@@ -15,6 +15,8 @@ enum RetroFix {
     /// 埋めた食事の自信（「たぶん」の線 0.7 より下にしておく）
     static let filledConfidence = 0.65
     static let reasonText = "同じ場所の別の日に、お店が分かりました"
+    /// 近くに同じジャンルの別のお店があるかを見る範囲（m）
+    static let crowdReach = 100.0
 
     /// 埋めるかどうかを見る食事（テストできるように、要るものだけ抜き出す）
     struct Other {
@@ -43,6 +45,24 @@ enum RetroFix {
         return fits(sureGenre) || fits(shopGenre)
     }
 
+    /// 近くに、同じジャンルの別のお店があるか（2026-11-27）。あれば、どのお店か取り違えやすいので埋めない。
+    /// 当たり具合の記録で、西新宿で「春日亭」を 50m 以内の 4 食に入れ、3 食が別のラーメン屋（一蘭・中華そば 流川 など）だった。
+    /// nearby はお店が分かった食事と、埋めようとする食事の候補（crowdReach 以内）。候補が 1 つも無ければ、分からないので「多い」とみなす。
+    /// 種類のはっきり違うお店（カフェ・バーなど）だけなら、埋める
+    static func crowded(_ nearby: [PlaceCandidate], shop: String, genre: String, shopGenre: String?) -> Bool {
+        guard !nearby.isEmpty else { return true }
+        let me = Matcher.normalize(shop)
+        return nearby.contains { c in
+            guard Matcher.normalize(c.name) != me else { return false }
+            // 種類の分からないお店（地図の名前だけのラーメン屋など）も、同じジャンルかもしれないので「多い」に数える
+            guard let g = Matcher.candidateGenre(c) else { return true }
+            return [genre, shopGenre].contains { want in
+                guard let want else { return false }
+                return g == want || sameKind.contains { $0.contains(g) && $0.contains(want) }
+            }
+        }
+    }
+
     /// 同じお店で出るのがふつうの、ごく近いジャンルの組（和食どうし・洋食どうし のような広いなかまは入れない）
     static let sameKind: [Set<String>] = [["ラーメン", "つけ麺"], ["カフェ", "スイーツ"]]
 
@@ -64,6 +84,7 @@ enum RetroFix {
               let lat = meal.latitude, let lon = meal.longitude else { return [] }
         let name = Matcher.normalize(place.name)
         let shopGenre = Matcher.candidateGenre(place.candidate)
+        let around = meal.candidates.filter { $0.distance <= crowdReach }
         let descriptor = FetchDescriptor<Meal>(predicate: #Predicate { !$0.hidden && $0.eatenOut })
         var changes: [Change] = []
         for other in (try? context.fetch(descriptor)) ?? [] where other.id != meal.id && other.place !== place {
@@ -71,6 +92,9 @@ enum RetroFix {
             let input = Other(hasPlace: other.place != nil, confidence: other.confidence, genre: other.genre,
                               atHomeOrWork: !other.spot.isEmpty, distance: Matcher.distance(lat, lon, a, b))
             guard shouldFill(input, sureGenre: meal.genre, shopGenre: shopGenre) else { continue }
+            // お店の多い所（近くに同じジャンルの別のお店がある）では埋めない
+            let nearby = around + other.candidates.filter { $0.distance <= crowdReach }
+            if crowded(nearby, shop: place.name, genre: other.genre, shopGenre: shopGenre) { continue }
             // その場所で「このお店ではない」と直されていたら入れない
             if Corrections.lookup(latitude: a, longitude: b).wrong.contains(name) { continue }
             changes.append(Change(meal: other, place: other.place, confidence: other.confidence, needsCheck: other.needsCheck,

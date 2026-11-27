@@ -130,15 +130,24 @@ extension Matcher {
     }
 
     /// ジャンルが合うお店を上へ、はっきり合わないお店を下へ
+    /// 2026-11-27: 1 つの料理しか出さないジャンル（ラーメンなど）は、強く動かす。
+    /// 当たり具合の記録で、ラーメンなのに近くのカフェ・揚げ物・天丼のお店を選んでいた（直した 33 件のうち、候補にあったのに選び間違えたのが 22 件）
     static func applyGenre(_ ranked: [PlaceCandidate], photoGenre: String?) -> [PlaceCandidate] {
-        guard photoGenre != nil else { return ranked }
+        guard let photoGenre else { return ranked }
+        let strict = singlePurposeGenres.contains(photoGenre)
         return ranked.map { c in
             var c = c
-            let fit = genreFit(photo: photoGenre, candidate: c)
-            c.score = min(1, max(0, c.score + (fit > 0 ? 0.12 * fit : 0.08 * fit)))
+            c.score = min(1, max(0, c.score + genreShift(fit: genreFit(photo: photoGenre, candidate: c), strict: strict)))
             return c
         }
         .sorted { $0.score > $1.score }
+    }
+
+    /// 点数の動かし方（strict は 1 つの料理しか出さないジャンル）
+    static func genreShift(fit: Double, strict: Bool) -> Double {
+        if fit > 0 { return (strict ? 0.2 : 0.12) * fit }
+        if fit < 0 { return strict ? -0.25 : -0.08 }
+        return 0
     }
 
     /// 写真の上位の名前を、食事の写真ぜんぶで合わせる（いちばん強い値を残す）

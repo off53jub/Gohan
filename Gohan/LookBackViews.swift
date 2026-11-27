@@ -373,13 +373,43 @@ private struct CalendarCell: View {
     }
 }
 
+/// 「たぶん」を見る順（2026-11-27）
+enum ReviewOrder {
+    /// 0: お店を当てた食事（合っているか、見れば分かる）・1: 場所はあるがお店が決まっていない・2: 場所もお店も無い
+    static func tier(hasPlace: Bool, hasLocation: Bool) -> Int {
+        hasPlace ? 0 : (hasLocation ? 1 : 2)
+    }
+
+    static func tier(of meal: Meal) -> Int {
+        let hasPlace: Bool = meal.place != nil
+        let hasLocation: Bool = meal.latitude != nil
+        return tier(hasPlace: hasPlace, hasLocation: hasLocation)
+    }
+
+    /// 段の順に並べる。同じ段の中は、元の順（新しい順）のまま
+    static func sorted<T>(_ items: [T], tier: (T) -> Int) -> [T] {
+        // 段ごとに分けて、つなぐ（段の中は元の順のまま）
+        var groups: [[T]] = [[], [], []]
+        for item in items {
+            let t: Int = min(2, max(0, tier(item)))
+            groups[t].append(item)
+        }
+        return groups[0] + groups[1] + groups[2]
+    }
+}
+
 /// 「たぶん」をまとめて見る（右に払えば「合ってる」。やらなくても困らない。便49）
 struct ReviewView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var context
-    @Query(filter: #Predicate<Meal> { $0.needsCheck && !$0.hidden }, sort: \Meal.date, order: .reverse) private var meals: [Meal]
+    @Query(filter: #Predicate<Meal> { $0.needsCheck && !$0.hidden }, sort: \Meal.date, order: .reverse) private var found: [Meal]
     @State private var drag: CGSize = .zero
     @State private var picking: Meal?
+
+    /// お店を当てた食事を先に。お店が分からない食事（見ても分からないことが多い）は後ろへ（2026-11-27 本人）
+    private var meals: [Meal] {
+        ReviewOrder.sorted(found, tier: ReviewOrder.tier(of:))
+    }
 
     var body: some View {
         NavigationStack {
