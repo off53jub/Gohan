@@ -440,25 +440,61 @@ struct PlaceDetailView: View {
     }
 }
 
+/// 地図のピン1本ぶん（地図に渡すのは、この軽い形だけ。お店や食事の記録は毎回たどらない）
+struct MapPin: Identifiable, Equatable {
+    let id: String
+    let name: String
+    let latitude: Double
+    let longitude: Double
+    let photo: String?
+    let want: Bool
+    let latest: Date
+
+    /// 一度に地図へ載せるピンの数（多すぎると地図の出入りがカクつく）
+    static let limit = 150
+
+    /// 見えている範囲（少し広め）のピンだけを、また行きたい→新しい順に、上限まで選ぶ
+    static func visible(_ pins: [MapPin], center: (lat: Double, lon: Double)?, span: (lat: Double, lon: Double)?,
+                        limit: Int = MapPin.limit) -> [MapPin] {
+        var inside = pins
+        if let center, let span {
+            let halfLat = span.lat * 0.75, halfLon = span.lon * 0.75
+            inside = pins.filter { abs($0.latitude - center.lat) <= halfLat && abs($0.longitude - center.lon) <= halfLon }
+        }
+        if inside.count <= limit { return inside }
+        let ordered = inside.sorted { a, b in
+            if a.want != b.want { return a.want }
+            return a.latest > b.latest
+        }
+        return Array(ordered.prefix(limit))
+    }
+}
+
 /// 行ったお店の地図（丸い写真のピン。また行きたいお店は赤いふち。デ13・便64）
 struct PlacesMapView: View {
+    @Environment(\.modelContext) private var context
     @Query private var places: [Place]
     @State private var onlyWant = false
     @State private var selected: Place?
     @State private var partner = PartnerStore.shared
     @State private var showTogether = false
+    /// 作っておいたピン（画面に出入りするたびに作り直さない）
+    @State private var pins: [MapPin] = []
+    @State private var builtFor: String?
+    @State private var center: (lat: Double, lon: Double)?
+    @State private var span: (lat: Double, lon: Double)?
 
     var body: some View {
         NavigationStack {
             Map {
-                ForEach(shown) { place in
-                    Annotation(place.name, coordinate: CLLocationCoordinate2D(latitude: place.latitude, longitude: place.longitude)) {
-                        Button { selected = place } label: {
-                            PhotoThumb(id: place.visibleMeals.first?.photoIDs.first, side: 40, circle: true)
-                                .overlay(Circle().strokeBorder(place.wantAgain ? Ink.aka : Color.white, lineWidth: 3))
+                ForEach(MapPin.visible(pins, center: center, span: span)) { pin in
+                    Annotation(pin.name, coordinate: CLLocationCoordinate2D(latitude: pin.latitude, longitude: pin.longitude)) {
+                        Button { open(pin) } label: {
+                            PhotoThumb(id: pin.photo, side: 40, circle: true)
+                                .overlay(Circle().strokeBorder(pin.want ? Ink.aka : Color.white, lineWidth: 3))
                                 .shadow(radius: 2)
                         }
-                        .accessibilityLabel(place.name)
+                        .accessibilityLabel(pin.name)
                     }
                 }
                 ForEach(partnerPins) { m in
@@ -467,6 +503,10 @@ struct PlacesMapView: View {
                             .overlay(Circle().strokeBorder(.white, lineWidth: 2))
                     }
                 }
+            }
+            .onMapCameraChange(frequency: .onEnd) { camera in
+                center = (camera.region.center.latitude, camera.region.center.longitude)
+                span = (camera.region.span.latitudeDelta, camera.region.span.longitudeDelta)
             }
             .safeAreaInset(edge: .top) {
                 HStack {
@@ -488,11 +528,36 @@ struct PlacesMapView: View {
             .navigationDestination(item: $selected) { PlaceDetailView(place: $0) }
             .navigationDestination(for: Meal.self) { MealDetailView(meal: $0) }
             .navigationDestination(for: Place.self) { PlaceDetailView(place: $0) }
+            .task(id: onlyWant) { rebuildIfChanged() }
         }
     }
 
-    private var shown: [Place] {
-        places.filter { (!$0.visibleMeals.isEmpty || $0.wantAgain || $0.wantToTry) && (!onlyWant || $0.wantAgain) }
+    private func open(_ pin: MapPin) {
+        selected = places.first { $0.key == pin.id }
+    }
+
+    /// 記録が変わったときだけ、ピンを作り直す（数を数えるだけなら軽い）
+    private func rebuildIfChanged() {
+        let meals = (try? context.fetchCount(FetchDescriptor<Meal>(predicate: #Predicate { !$0.hidden }))) ?? -1
+        let wants = (try? context.fetchCount(FetchDescriptor<Place>(predicate: #Predicate { $0.wantAgain }))) ?? -1
+        let stamp = "\(places.count)-\(meals)-\(wants)-\(onlyWant)"
+        if stamp == builtFor { return }
+        builtFor = stamp
+        var made: [MapPin] = []
+        made.reserveCapacity(places.count)
+        for place in places {
+            if onlyWant && !place.wantAgain { continue }
+            // 並べ替えずに、いちばん新しい食事だけを探す
+            var latest: Meal?
+            for meal in place.meals where !meal.hidden {
+                if latest == nil || meal.date > latest!.date { latest = meal }
+            }
+            guard latest != nil || place.wantAgain || place.wantToTry else { continue }
+            made.append(MapPin(id: place.key, name: place.name, latitude: place.latitude, longitude: place.longitude,
+                               photo: latest?.photoIDs.first, want: place.wantAgain,
+                               latest: latest?.date ?? place.firstVisit))
+        }
+        if made != pins { pins = made }
     }
 
     /// ふたり帖の相手の食事（ふたりの地図。便64）
