@@ -136,6 +136,8 @@ final class Scanner {
         await PlaceRehome.sweep(context: context)
         // お店の決まった食事の写真の「見た目の印」を、少しずつ作りためる（自分の過去の写真と見比べるため。2026-11-26 案1）
         await OwnPhotos.backfill(context: context)
+        // PC から前に取り込んだ写真を、少しずつ小さく置き直す（端末の空きを食わないように。2026-11-27）
+        await ImportedPhotos.shrinkSome()
         await refreshFences(context: context)
 
         if notify, let meal = added.last {
