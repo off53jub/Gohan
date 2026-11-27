@@ -65,18 +65,41 @@ enum ImportedPhotos {
         return folder.appendingPathComponent(name)
     }
 
+    /// 置くときの長い辺（AI に送るのも 1024。全画面で見ても粗くない）
+    static let keepSide = 1024
+    /// 置き直すとき、これより小さくならなければ元のまま（割合）
+    static let worthRatio = 0.8
+
+    /// 置く。中身の指紋をファイル名の頭に入れる（小さく置き直しても、同じ写真かどうか分かるように）
     static func save(_ jpeg: Data) -> String? {
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        let name = UUID().uuidString + ".jpg"
+        let name = digest(jpeg) + "-" + String(UUID().uuidString.prefix(8)) + ".jpg"
         do {
-            try jpeg.write(to: folder.appendingPathComponent(name), options: .atomic)
+            try (smaller(jpeg) ?? jpeg).write(to: folder.appendingPathComponent(name), options: .atomic)
             return prefix + name
         } catch {
             return nil
         }
     }
 
-    /// 長い辺が side くらいの絵
+    /// HEIC で、長い辺 keepSide までにした中身。はっきり小さくならない・作れないときは nil（2026-11-27）
+    /// 拡張子は .jpg のまま（ID を変えないため）。読むときは中身で形を見分けるので困らない
+    static func smaller(_ data: Data, side: Int = keepSide) -> Data? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: side,
+        ]
+        guard let cg = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { return nil }
+        let out = NSMutableData()
+        guard let dest = CGImageDestinationCreateWithData(out, UTType.heic.identifier as CFString, 1, nil) else { return nil }
+        CGImageDestinationAddImage(dest, cg, [kCGImageDestinationLossyCompressionQuality: 0.6] as CFDictionary)
+        guard CGImageDestinationFinalize(dest), Double(out.length) < Double(data.count) * worthRatio else { return nil }
+        return out as Data
+    }
+
+    /// 長い辺が side くらいの絵（読むときに絵にしてしまい、画面に出すときに止まらないように）
     static func image(_ id: String, side: CGFloat) async -> UIImage? {
         guard let url = url(id) else { return nil }
         return await Task.detached(priority: .utility) { () -> UIImage? in
@@ -84,6 +107,7 @@ enum ImportedPhotos {
             let options: [CFString: Any] = [
                 kCGImageSourceCreateThumbnailFromImageAlways: true,
                 kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceShouldCacheImmediately: true,
                 kCGImageSourceThumbnailMaxPixelSize: max(64, Int(side)),
             ]
             guard let cg = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { return nil }
@@ -91,8 +115,19 @@ enum ImportedPhotos {
         }.value
     }
 
-    static var count: Int {
-        (try? FileManager.default.contentsOfDirectory(atPath: folder.path).count) ?? 0
+    static var count: Int { names.count }
+
+    static var names: [String] {
+        (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? []
+    }
+
+    /// 置いた写真の合計（バイト）
+    static func totalBytes() async -> Int {
+        let folder = folder
+        return await Task.detached(priority: .utility) {
+            let urls = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.fileSizeKey])) ?? []
+            return urls.reduce(0) { $0 + ((try? $1.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0) }
+        }.value
     }
 
     /// 中身の指紋（同じ写真を 2 回入れないため。PC は同じ写真から毎回同じ JPEG を作る）
@@ -100,9 +135,107 @@ enum ImportedPhotos {
         SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 
+    /// ファイル名の頭の指紋（2026-11-27 からの名前。それより前のファイルは nil）
+    static func printInName(_ name: String) -> String? {
+        let head = name.prefix(64)
+        guard head.count == 64, name.dropFirst(64).first == "-", head.allSatisfy({ $0.isHexDigit }) else { return nil }
+        return String(head)
+    }
+
+    /// 置いた写真の、もとの中身の指紋（小さく置き直したものも、もとの指紋を返す）
     static func digest(of id: String) -> String? {
-        guard let url = url(id), let data = try? Data(contentsOf: url) else { return nil }
+        guard let url = url(id) else { return nil }
+        let name = url.lastPathComponent
+        if let inName = printInName(name) { return inName }
+        if let kept = withBook({ $0.prints[name] }) { return kept }
+        guard let data = try? Data(contentsOf: url) else { return nil }
         return digest(data)
+    }
+
+    // MARK: - 前に置いた写真を小さく置き直す（2026-11-27）
+
+    /// 2026-11-27 より前に置いた写真の覚え（もとの指紋と、置き直しを見たか）
+    struct Book: Codable {
+        var prints: [String: String] = [:]
+        var checked: Set<String> = []
+    }
+
+    private static let lock = NSLock()
+    private static var bookCache: Book?
+    private static var bookURL: URL { URL.applicationSupportDirectory.appendingPathComponent("imported-book.json") }
+
+    private static func withBook<T>(_ body: (inout Book) -> T) -> T {
+        lock.lock()
+        defer { lock.unlock() }
+        var book = bookCache
+            ?? (try? Data(contentsOf: bookURL)).flatMap { try? JSONDecoder().decode(Book.self, from: $0) }
+            ?? Book()
+        let out = body(&book)
+        bookCache = book
+        return out
+    }
+
+    private static func writeBook() {
+        guard let data = withBook({ try? JSONEncoder().encode($0) }) else { return }
+        try? data.write(to: bookURL, options: .atomic)
+    }
+
+    /// 置き直すもの（名前に指紋が無く、まだ見ていないもの）
+    static func needsShrink(_ names: [String], checked: Set<String>) -> [String] {
+        names.filter { printInName($0) == nil && !checked.contains($0) }
+    }
+
+    /// 前に置いた写真を、少しずつ HEIC で小さく置き直す。減ったバイト数を返す
+    /// もとの指紋を先に書き残してから置きかえる（途中で止まっても、同じ写真の見分けが壊れない）
+    @discardableResult
+    static func shrinkSome(limit: Int = 200) async -> Int {
+        let todo = Array(withBook { needsShrink(names, checked: $0.checked) }.prefix(limit))
+        guard !todo.isEmpty else { return 0 }
+        let folder = folder
+        return await Task.detached(priority: .background) { () -> Int in
+            var small: [(url: URL, data: Data, saved: Int)] = []
+            var prints: [String: String] = [:]
+            for name in todo {
+                let url = folder.appendingPathComponent(name)
+                guard let data = try? Data(contentsOf: url) else { continue }
+                prints[name] = digest(data)
+                if let made = smaller(data) { small.append((url, made, data.count - made.count)) }
+            }
+            withBook { book in book.prints.merge(prints) { $1 } }
+            writeBook()
+            var saved = 0
+            for item in small where (try? item.data.write(to: item.url, options: .atomic)) != nil { saved += item.saved }
+            // 読めなかったものも「見た」にする（何度も読みに行かない）
+            withBook { book in book.checked.formUnion(todo) }
+            writeBook()
+            return saved
+        }.value
+    }
+
+    /// まだ置き直していない写真の数
+    static var pendingShrink: Int { withBook { needsShrink(names, checked: $0.checked) }.count }
+
+    // MARK: - 使っていない写真を片づける（作る人のメニュー・確かめてから）
+
+    /// どの食事も使っていない写真の名前（referenced は食事の写真 ID 全部）
+    static func unused(_ names: [String], referenced: Set<String>) -> [String] {
+        names.filter { !referenced.contains(prefix + $0) }
+    }
+
+    /// 消す。消した数を返す
+    static func remove(_ names: [String]) -> Int {
+        var removed = 0
+        for name in names where !name.contains("/") {
+            if (try? FileManager.default.removeItem(at: folder.appendingPathComponent(name))) != nil { removed += 1 }
+        }
+        withBook { book in
+            for name in names {
+                book.prints[name] = nil
+                book.checked.remove(name)
+            }
+        }
+        writeBook()
+        return removed
     }
 }
 
@@ -262,6 +395,37 @@ struct PCImportView: View {
     @State private var running = false
     @State private var progress = ""
     @State private var message: String?
+    @State private var bytes: Int?
+    @State private var unusedNames: [String] = []
+    @State private var confirmRemove = false
+    @State private var shrinking = false
+
+    static func megabytes(_ bytes: Int) -> String {
+        String(format: "%.0f MB", Double(bytes) / 1_048_576)
+    }
+
+    private func refreshSizes() async {
+        bytes = await ImportedPhotos.totalBytes()
+        // 食事を読めなかったときは、消す候補を出さない（全部が「使っていない」に見えてしまうため）
+        do {
+            let meals = try context.fetch(FetchDescriptor<Meal>())
+            unusedNames = ImportedPhotos.unused(ImportedPhotos.names, referenced: Set(meals.flatMap(\.photoIDs)))
+        } catch {
+            unusedNames = []
+        }
+    }
+
+    private func shrinkAll() async {
+        shrinking = true
+        defer { shrinking = false }
+        let before = bytes ?? 0
+        // shrinkSome は、見たものに印を付けるので、残りは必ず減っていく
+        while !Task.isCancelled, ImportedPhotos.pendingShrink > 0 {
+            await ImportedPhotos.shrinkSome(limit: 100)
+        }
+        await refreshSizes()
+        message = "置き直しました（\(Self.megabytes(before)) → \(Self.megabytes(bytes ?? 0))）"
+    }
 
     var body: some View {
         Form {
@@ -284,10 +448,34 @@ struct PCImportView: View {
             }
             Section {
                 LabeledContent("今月 取り込んだ食事", value: "\(Metrics.value("pcImports"))")
-                LabeledContent("アプリの中に置いた写真", value: "\(ImportedPhotos.count) 枚")
+                LabeledContent("アプリの中に置いた写真", value: "\(ImportedPhotos.count) 枚" + (bytes.map { "・\(Self.megabytes($0))" } ?? ""))
+                if shrinking {
+                    HStack {
+                        ProgressView()
+                        Text("小さく置き直しています").foregroundStyle(.secondary)
+                    }
+                } else {
+                    Button("前に取り込んだ写真を、いま小さく置き直す") { Task { await shrinkAll() } }
+                        .disabled(running)
+                }
+                if !unusedNames.isEmpty {
+                    Button("どの食事にも使っていない写真 \(unusedNames.count) 枚を消す", role: .destructive) { confirmRemove = true }
+                        .disabled(running || shrinking)
+                }
+            } footer: {
+                Text("写真アプリの写真は、このアプリの中には置いていません（見るときに写真アプリから読みます）。PC から取り込んだ写真だけ、アプリの中に置いています。HEIC・長い辺 1024 にして置き、前に取り込んだものも、写真を読みに行くたびに少しずつ置き直します。")
             }
         }
         .navigationTitle("PC から取り込む")
+        .task { await refreshSizes() }
+        .confirmationDialog("どの食事にも使っていない写真 \(unusedNames.count) 枚を消します。元に戻せません（PC の元の写真は残ります）。",
+                            isPresented: $confirmRemove, titleVisibility: .visible) {
+            Button("消す", role: .destructive) {
+                message = "\(ImportedPhotos.remove(unusedNames)) 枚を消しました。"
+                Task { await refreshSizes() }
+            }
+            Button("やめる", role: .cancel) {}
+        }
         .fileImporter(isPresented: $picking, allowedContentTypes: [.json, .data], allowsMultipleSelection: true) { picked in
             guard case .success(let urls) = picked else { return }
             Task { await run(urls) }

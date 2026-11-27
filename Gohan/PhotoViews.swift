@@ -3,26 +3,61 @@ import SwiftUI
 import UIKit
 
 /// 写真アプリの写真を表示する（読み込んだ絵は少しだけ覚えておく）
+/// 2026-11-27 軽くした: 覚える量を「枚数」でなく「大きさ（メモリ）」で決める・大きさを段にそろえて同じ写真を何通りも覚えない・
+/// 全画面の大きな絵は覚えない・同じ絵を同時に 2 回読まない・メモリが足りないと言われたら全部忘れる。
 @MainActor
 final class ThumbCache {
     static let shared = ThumbCache()
     private let cache = NSCache<NSString, UIImage>()
+    private var loading: [NSString: Task<UIImage?, Never>] = [:]
 
-    init() { cache.countLimit = 400 }
+    /// 読む大きさの段（長い辺 px）。頼まれた大きさ以上の、いちばん近い段で読む
+    static let steps: [CGFloat] = [160, 320, 512, 800, 1200, 2400]
+    /// これより大きい絵（全画面で拡大する絵）は覚えない（1 枚で 20MB ほどになるため）
+    static let keepUpTo: CGFloat = 1200
+    /// 覚えておく絵の合計（メモリ）
+    static let memoryLimit = 120 * 1024 * 1024
+
+    init() {
+        cache.countLimit = 400
+        cache.totalCostLimit = Self.memoryLimit
+        NotificationCenter.default.addObserver(forName: UIApplication.didReceiveMemoryWarningNotification,
+                                               object: nil, queue: .main) { [cache] _ in cache.removeAllObjects() }
+    }
+
+    static func step(_ side: CGFloat) -> CGFloat { steps.first { $0 >= side } ?? steps[steps.count - 1] }
+
+    /// 絵がメモリで使う大きさ（1 画素 4 バイト）
+    static func cost(_ image: UIImage) -> Int {
+        Int(image.size.width * image.scale * image.size.height * image.scale * 4)
+    }
+
+    private func key(_ id: String, _ side: CGFloat) -> NSString { "\(id)#\(Int(side))" as NSString }
 
     func image(_ id: String, side: CGFloat) async -> UIImage? {
         guard !id.isEmpty else { return nil }
-        let key = "\(id)#\(Int(side))" as NSString
-        if let hit = cache.object(forKey: key) { return hit }
+        let wanted = Self.step(side)
+        // もっと大きい段で覚えていれば、それを使う（読み直さない）
+        for s in Self.steps where s >= wanted {
+            if let hit = cache.object(forKey: key(id, s)) { return hit }
+        }
+        let k = key(id, wanted)
+        if let running = loading[k] { return await running.value }
+        let task = Task { await Self.load(id, side: wanted) }
+        loading[k] = task
+        let image = await task.value
+        loading[k] = nil
+        if let image, wanted <= Self.keepUpTo { cache.setObject(image, forKey: k, cost: Self.cost(image)) }
+        return image
+    }
+
+    private static func load(_ id: String, side: CGFloat) async -> UIImage? {
         if ImportedPhotos.isFile(id) {
             // PC から取り込んだ写真（写真アプリに無いもの）
-            guard let image = await ImportedPhotos.image(id, side: side) else { return nil }
-            cache.setObject(image, forKey: key)
-            return image
+            return await ImportedPhotos.image(id, side: side)
         }
-        guard let asset = PhotoLoader.asset(id), let image = await PhotoLoader.image(asset, side: side) else { return nil }
-        cache.setObject(image, forKey: key)
-        return image
+        guard let asset = PhotoLoader.asset(id) else { return nil }
+        return await PhotoLoader.image(asset, side: side)
     }
 
     /// 先に読んでおく（一覧をなめらかに。便69）
