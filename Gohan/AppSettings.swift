@@ -144,6 +144,24 @@ enum AISettings {
         set { d.set(newValue, forKey: "ai.zoomText") }
     }
 
+    /// 大6: 場所はあるのにお店が空の昔の食事を、料理の種類の名前で探し直す（2026-11-28）
+    static var retroSearch: Bool {
+        get { d.object(forKey: "ai.retroSearch") as? Bool ?? true }
+        set { d.set(newValue, forKey: "ai.retroSearch") }
+    }
+
+    /// 大11: よく食べる種類を、写真で種類が分からないときに少し優先（2026-11-28）
+    static var habits: Bool {
+        get { d.object(forKey: "ai.habits") as? Bool ?? true }
+        set { d.set(newValue, forKey: "ai.habits") }
+    }
+
+    /// 大20: 月のはじめに「先月のごはん」を知らせる（2026-11-28）
+    static var monthlyNote: Bool {
+        get { d.object(forKey: "ai.monthlyNote") as? Bool ?? true }
+        set { d.set(newValue, forKey: "ai.monthlyNote") }
+    }
+
     /// 料理の種類が分かったのに、その種類のお店が候補に無いとき、種類の名前で近くを探し直す（案5）
     static var genreSearch: Bool {
         get { d.object(forKey: "ai.genreSearch") as? Bool ?? true }

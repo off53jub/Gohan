@@ -219,6 +219,15 @@ struct StatsView: View {
                     Text("\(String(year))年のごはん")
                 }
                 Section("ジャンル") { counts(inYear.map(\.genre)) }
+                Section("種類ごとの帖（これまでぜんぶ）") {
+                    ForEach(topGenres, id: \.self) { g in
+                        NavigationLink {
+                            GenreBookView(genre: g, meals: meals.filter { $0.genre == g })
+                        } label: {
+                            LabeledContent(g, value: "\(meals.filter { $0.genre == g }.count)食")
+                        }
+                    }
+                }
                 Section("よく食べた料理") { counts(inYear.flatMap(\.dishes), limit: 15) }
                 Section("よく行った街") { counts(inYear.map(\.area).filter { !$0.isEmpty }, limit: 10) }
                 Section("よく行ったお店") { counts(inYear.compactMap { $0.place?.name }, limit: 10) }
@@ -247,6 +256,13 @@ struct StatsView: View {
                 }
             }
         }
+    }
+
+    /// 多い順の種類（その他は外す。大21）
+    private var topGenres: [String] {
+        var count: [String: Int] = [:]
+        for m in meals where !m.genre.isEmpty && m.genre != "その他" { count[m.genre, default: 0] += 1 }
+        return count.sorted { $0.value > $1.value }.prefix(8).map(\.key)
     }
 
     private var years: [Int] {
