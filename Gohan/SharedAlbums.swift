@@ -89,6 +89,7 @@ struct SharedAlbumSection: View {
                 Button("やめる", role: .cancel) { job?.cancel() }
             } else {
                 Button("ういきょのアルバムを数える") { job = Task { await count() } }
+                Button("ういきょのごはんを取り込む") { job = Task { await importNow() } }
             }
             if let note { Text(note).font(.footnote).foregroundStyle(.secondary) }
             ForEach(tallies) { t in
@@ -105,9 +106,25 @@ struct SharedAlbumSection: View {
         } header: {
             Text("共有アルバム（試し・2026-11-28）")
         } footer: {
-            Text("「ういきょ」で始まる共有アルバムの写真を、端末の中で見て数えるだけです。食事も写真も変えません。写真が多いと数分かかります。")
+            Text("数えるほうは、食事も写真も変えません。取り込むほうは、自分の食事の時間に重なる写真をその食事に足し、重ならない写真は、その時刻に自分も同じ所にいた（訪問の記録・自分の写真の場所が 300m 以内）ときだけ新しい食事にします。ういちゃんひとりの食事と、場所の無い写真は載せません。写真が多いと数分〜数十分かかります。")
         }
         .onDisappear { job?.cancel() }
+    }
+
+    private func importNow() async {
+        guard PHPhotoLibrary.authorizationStatus(for: .readWrite) == .authorized else {
+            note = "写真へのアクセスが「すべての写真」になっていないので、共有アルバムが読めません。"
+            return
+        }
+        running = true
+        defer { running = false }
+        note = nil
+        let r = await SharedAlbums.importFood(context: context) { d, t in done = d; total = t }
+        note = "見た \(r.looked) 枚（前に取り込み済み \(r.already)）・ごはん \(r.food) 枚。"
+            + "自分の食事 \(r.mealsTouched) 食に写真を \(r.addedToMeals) 枚足し、うち \(r.locationsAdded) 食に場所を入れました。"
+            + "一緒に食べた食事を \(r.newMeals) 食つくりました。"
+            + "自分がいなかった写真 \(r.notThere) 枚・場所の無い写真 \(r.noLocation) 枚は載せていません。"
+            + (Task.isCancelled ? "（途中でやめました）" : "")
     }
 
     private func count() async {
@@ -155,5 +172,150 @@ struct SharedAlbumSection: View {
             tallies[tallies.count - 1] = tally
         }
         note = "数え終わりました。"
+    }
+}
+
+// MARK: - 取り込み（2026-11-28）
+// 1. 本人の食事の時間（前後 30 分）に重なる写真 → その食事に写真を足す（場所が無ければ写真の場所を入れる）
+// 2. 重ならないが場所がある写真 → その時刻に本人が同じ所（300m 以内）にいたなら、一緒に食べた食事として作る
+//    （本人がいた証拠: iPhone の訪問の記録、または本人のライブラリの前後 60 分の写真の場所）
+// 3. それ以外（ういちゃんひとりの食事・場所も無い）→ 載せない
+// 作る人のメニューのボタンでだけ動く（ういちゃんの iPhone では押さない）。
+
+extension SharedAlbums {
+    static let thereDistance = 300.0
+    static let thereWindow: TimeInterval = 60 * 60
+    static let doneKey = "sharedAlbum.imported"
+
+    /// 時間と場所が近い写真を 1 回の食事にまとめる
+    static func groups(_ photos: [SeenPhoto]) -> [[SeenPhoto]] {
+        var out: [[SeenPhoto]] = []
+        for p in photos.sorted(by: { $0.date < $1.date }) {
+            if let last = out.last?.last, p.date.timeIntervalSince(last.date) <= Matcher.mealGap {
+                if let a = last.latitude, let b = last.longitude, let c = p.latitude, let d = p.longitude,
+                   Matcher.distance(a, b, c, d) > Matcher.mealDistance {
+                    out.append([p])
+                } else {
+                    out[out.count - 1].append(p)
+                }
+            } else {
+                out.append([p])
+            }
+        }
+        return out
+    }
+
+    /// その時刻に本人が同じ所にいたか
+    static func wasThere(latitude: Double, longitude: Double, from: Date, to: Date,
+                         visits: [Visit], ownSpots: [(date: Date, latitude: Double, longitude: Double)]) -> Bool {
+        let slack: TimeInterval = 10 * 60
+        for v in visits {
+            guard let arrival = v.arrival else { continue }
+            let departure = v.departure ?? arrival
+            guard arrival.addingTimeInterval(-slack) <= to, departure.addingTimeInterval(slack) >= from else { continue }
+            if Matcher.distance(v.latitude, v.longitude, latitude, longitude) <= thereDistance { return true }
+        }
+        return ownSpots.contains { s in
+            s.date >= from.addingTimeInterval(-thereWindow) && s.date <= to.addingTimeInterval(thereWindow)
+                && Matcher.distance(s.latitude, s.longitude, latitude, longitude) <= thereDistance
+        }
+    }
+
+    /// 本人のライブラリの、その時間の前後の写真の場所
+    static func ownSpots(from: Date, to: Date) -> [(date: Date, latitude: Double, longitude: Double)] {
+        let options = PHFetchOptions()
+        options.predicate = NSPredicate(format: "creationDate >= %@ AND creationDate <= %@",
+                                        from.addingTimeInterval(-thereWindow) as NSDate, to.addingTimeInterval(thereWindow) as NSDate)
+        options.includeAssetSourceTypes = [.typeUserLibrary]
+        var out: [(date: Date, latitude: Double, longitude: Double)] = []
+        PHAsset.fetchAssets(with: options).enumerateObjects { a, _, _ in
+            if let l = a.location, let d = a.creationDate { out.append((d, l.coordinate.latitude, l.coordinate.longitude)) }
+        }
+        return out
+    }
+
+    struct ImportResult {
+        var looked = 0
+        var food = 0
+        var addedToMeals = 0
+        var mealsTouched = 0
+        var locationsAdded = 0
+        var newMeals = 0
+        var notThere = 0
+        var noLocation = 0
+        var already = 0
+    }
+
+    @MainActor
+    static func importFood(context: ModelContext, progress: @escaping @MainActor (Int, Int) -> Void) async -> ImportResult {
+        var result = ImportResult()
+        var done = Set(UserDefaults.standard.stringArray(forKey: doneKey) ?? [])
+        var assets: [PHAsset] = []
+        for album in albums() {
+            let options = PHFetchOptions()
+            options.predicate = NSPredicate(format: "mediaType == %d", PHAssetMediaType.image.rawValue)
+            let r = PHAsset.fetchAssets(in: album, options: options)
+            r.enumerateObjects { a, _, _ in assets.append(a) }
+        }
+        // 1 枚ずつ端末の中で見て、ごはんの写真だけ残す
+        var food: [SeenPhoto] = []
+        for (i, asset) in assets.enumerated() {
+            if Task.isCancelled { return result }
+            progress(i + 1, assets.count)
+            result.looked += 1
+            if done.contains(asset.localIdentifier) { result.already += 1; continue }
+            let seen = await Scanner.shared.look(asset)
+            if seen.food >= Matcher.foodThreshold { food.append(seen) }
+        }
+        result.food = food.count
+        let visits = VisitLog.load()
+        for group in groups(food) {
+            if Task.isCancelled { break }
+            guard let first = group.first, let last = group.last else { continue }
+            let from = first.date.addingTimeInterval(-30 * 60)
+            let to = last.date.addingTimeInterval(30 * 60)
+            let descriptor = FetchDescriptor<Meal>(predicate: #Predicate { $0.endDate >= from && $0.date <= to })
+            let near = ((try? context.fetch(descriptor)) ?? []).filter { !$0.hidden }
+            let ids = group.map(\.id)
+            let spot = Matcher.center(of: group)
+            if let meal = near.min(by: { abs($0.date.timeIntervalSince(first.date)) < abs($1.date.timeIntervalSince(first.date)) }) {
+                // 1. 重なる食事に写真を足す
+                let fresh = ids.filter { !meal.photoIDs.contains($0) }
+                meal.photoIDs.append(contentsOf: fresh)
+                result.addedToMeals += fresh.count
+                result.mealsTouched += 1
+                if meal.latitude == nil, meal.place == nil, meal.spot.isEmpty, let spot {
+                    meal.latitude = spot.latitude
+                    meal.longitude = spot.longitude
+                    let p = await PlaceFinder.areaAndRegion(latitude: spot.latitude, longitude: spot.longitude)
+                    if meal.area.isEmpty { meal.area = p.area }
+                    if meal.region.isEmpty { meal.region = p.region }
+                    result.locationsAdded += 1
+                }
+                if !meal.source.contains("+uikyo") { meal.source += "+uikyo" }
+                done.formUnion(ids)
+            } else if let spot {
+                // 2. 本人もそこにいたなら、一緒に食べた食事として作る
+                guard wasThere(latitude: spot.latitude, longitude: spot.longitude, from: first.date, to: last.date,
+                               visits: visits, ownSpots: ownSpots(from: first.date, to: last.date)) else {
+                    result.notThere += group.count
+                    continue
+                }
+                if let meal = await Scanner.shared.buildMeal(group, all: group, context: context, old: true) {
+                    if !meal.source.contains("+uikyo") { meal.source += "+uikyo" }
+                    result.newMeals += 1
+                }
+                done.formUnion(ids)
+            } else {
+                // 3. 場所も無く、重なる食事も無い
+                result.noLocation += group.count
+            }
+            try? context.save()
+            UserDefaults.standard.set(Array(done), forKey: doneKey)
+        }
+        try? context.save()
+        UserDefaults.standard.set(Array(done), forKey: doneKey)
+        Metrics.count("uikyoImports")
+        return result
     }
 }

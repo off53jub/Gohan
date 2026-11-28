@@ -176,7 +176,7 @@ final class Scanner {
     }
 
     /// 写真1枚を端末の中で見る
-    private func look(_ asset: PHAsset) async -> SeenPhoto {
+    func look(_ asset: PHAsset) async -> SeenPhoto {
         let isVideo = asset.mediaType == .video
         var result = PhotoVision.Look(food: 0, label: "")
         let image: UIImage?
