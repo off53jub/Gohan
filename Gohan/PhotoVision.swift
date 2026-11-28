@@ -8,7 +8,10 @@ import Vision
 /// 写真アプリから絵を取り出す
 enum PhotoLoader {
     static func asset(_ id: String) -> PHAsset? {
-        PHAsset.fetchAssets(withLocalIdentifiers: [id], options: nil).firstObject
+        // 共有アルバムの写真（ういきょ。2026-11-28）も ID で見つけられるように
+        let options = PHFetchOptions()
+        options.includeAssetSourceTypes = [.typeUserLibrary, .typeCloudShared, .typeiTunesSynced]
+        return PHAsset.fetchAssets(withLocalIdentifiers: [id], options: options).firstObject
     }
 
     /// 長い辺が side くらいの絵（iCloud にしか無い写真も取りに行く）

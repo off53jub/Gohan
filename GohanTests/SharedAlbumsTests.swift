@@ -35,3 +35,29 @@ final class SharedAlbumsTests: XCTestCase {
         XCTAssertFalse(SharedAlbums.inMeal(start.addingTimeInterval(-31 * 60), spans: spans))
     }
 }
+
+/// 2026-11-28 ういきょのごはんの取り込み
+final class SharedAlbumImportTests: XCTestCase {
+    private let t0 = Date(timeIntervalSince1970: 1_700_000_000)
+    private func photo(_ min: Double, _ lat: Double? = 35.69, _ lon: Double? = 139.70) -> SeenPhoto {
+        SeenPhoto(id: "p\(min)", date: t0.addingTimeInterval(min * 60), latitude: lat, longitude: lon, accuracy: 10, food: 0.9, label: "ramen")
+    }
+
+    func testGroupsSplitByTimeAndPlace() {
+        let g = SharedAlbums.groups([photo(0), photo(10), photo(120), photo(125, 35.80, 139.90)])
+        XCTAssertEqual(g.map(\.count), [2, 1, 1])
+    }
+
+    func testWasThereByVisit() {
+        let v = Visit(arrival: t0.addingTimeInterval(-600), departure: t0.addingTimeInterval(3600), latitude: 35.6901, longitude: 139.7001, accuracy: 20)
+        XCTAssertTrue(SharedAlbums.wasThere(latitude: 35.69, longitude: 139.70, from: t0, to: t0, visits: [v], ownSpots: []))
+        XCTAssertFalse(SharedAlbums.wasThere(latitude: 35.75, longitude: 139.70, from: t0, to: t0, visits: [v], ownSpots: []))
+    }
+
+    func testWasThereByOwnPhoto() {
+        let near = [(date: t0.addingTimeInterval(50 * 60), latitude: 35.6905, longitude: 139.7003)]
+        XCTAssertTrue(SharedAlbums.wasThere(latitude: 35.69, longitude: 139.70, from: t0, to: t0, visits: [], ownSpots: near))
+        let late = [(date: t0.addingTimeInterval(90 * 60), latitude: 35.69, longitude: 139.70)]
+        XCTAssertFalse(SharedAlbums.wasThere(latitude: 35.69, longitude: 139.70, from: t0, to: t0, visits: [], ownSpots: late))
+    }
+}
