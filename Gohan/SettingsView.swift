@@ -393,6 +393,7 @@ struct AdvancedSettingsView: View {
             }
             accuracySwitches
             BigUpdateSection()
+            SharedAlbumSection()
             Section {
                 Picker("覚えておく写真の量", selection: $memoryMB) {
                     ForEach(PhotoSettings.memoryChoices, id: \.self) { Text("\($0) MB").tag($0) }
