@@ -27,7 +27,7 @@ extension Matcher {
             return receipt ? "レシートの文字「\(name)」と場所が合いました" : "看板の文字「\(name)」と場所が合いました"
         }
         if pick.visited { return "前にも来たお店で、場所が合いました" }
-        if source == "device" { return "写真の場所にいちばん近いお店です（\(Int(pick.distance.rounded()))m）" }
+        if source == "device", pick.distance < PlaceCandidate.unknownDistance { return "写真の場所にいちばん近いお店です（\(Int(pick.distance.rounded()))m）" }
         return ""
     }
 
