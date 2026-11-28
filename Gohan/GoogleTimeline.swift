@@ -31,6 +31,26 @@ enum GoogleTimeline {
         if let data = try? JSONEncoder().encode(spots) { try? data.write(to: url, options: [.atomic, .completeFileProtection]) }
     }
 
+    /// 選んだファイルを読む（ドライブなどで端末にまだ無いファイルは、取ってきてから読む）
+    static func read(_ url: URL) -> Data? {
+        if let data = try? Data(contentsOf: url), !data.isEmpty { return data }
+        var out: Data?
+        var error: NSError?
+        NSFileCoordinator().coordinate(readingItemAt: url, options: [.withoutChanges], error: &error) { u in
+            out = try? Data(contentsOf: u)
+        }
+        return out
+    }
+
+    /// 読めなかったときに、何が入っていたかを短く言う
+    static func describe(_ data: Data) -> String {
+        let head = String(decoding: data.prefix(120), as: UTF8.self).replacingOccurrences(of: "\n", with: " ")
+        guard let json = try? JSONSerialization.jsonObject(with: data) else { return "\(data.count) バイト・JSON ではない・先頭「\(head.prefix(60))」" }
+        if let dict = json as? [String: Any] { return "\(data.count) バイト・中の名前 \(dict.keys.sorted().prefix(5).joined(separator: ","))" }
+        if let list = json as? [Any] { return "\(data.count) バイト・\(list.count) 件だが形が違う・先頭「\(head.prefix(60))」" }
+        return "\(data.count) バイト"
+    }
+
     /// "geo:35.452706,139.391113" → (緯度, 経度)
     static func geo(_ s: String?) -> (Double, Double)? {
         guard let s, s.hasPrefix("geo:") else { return nil }
@@ -54,7 +74,7 @@ enum GoogleTimeline {
         let segments: [[String: Any]]
         if let list = json as? [[String: Any]] {
             segments = list
-        } else if let dict = json as? [String: Any], let list = dict["semanticSegments"] as? [[String: Any]] {
+        } else if let dict = json as? [String: Any], let list = (dict["semanticSegments"] ?? dict["timelineObjects"]) as? [[String: Any]] {
             segments = list
         } else {
             return []

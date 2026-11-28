@@ -93,6 +93,7 @@ struct SharedAlbumSection: View {
             } else {
                 Button("ういきょのアルバムを数える") { job = Task { await count() } }
                 Button("ういきょのごはんを取り込む") { job = Task { await importNow() } }
+                NavigationLink("取り込みの結果を見直す") { UikyoReviewView() }
                 Button("Google のタイムラインを読む（今 \(timelineCount) 点）") { pickingTimeline = true }
             }
             if let note { Text(note).font(.footnote).foregroundStyle(.secondary) }
@@ -123,15 +124,17 @@ struct SharedAlbumSection: View {
     private func readTimeline(_ url: URL) async {
         running = true
         defer { running = false }
-        let spots = await Task.detached { () -> [GoogleTimeline.Spot] in
-            let scoped = url.startAccessingSecurityScopedResource()
-            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-            guard let data = try? Data(contentsOf: url) else { return [] }
+        let scoped = url.startAccessingSecurityScopedResource()
+        let read = await Task.detached { () -> (spots: [GoogleTimeline.Spot], why: String) in
+            guard let data = GoogleTimeline.read(url) else { return ([], "ファイルが開けませんでした") }
             let spots = GoogleTimeline.parse(data)
-            if !spots.isEmpty { GoogleTimeline.save(spots) }
-            return spots
+            if spots.isEmpty { return ([], GoogleTimeline.describe(data)) }
+            GoogleTimeline.save(spots)
+            return (spots, "")
         }.value
-        guard !spots.isEmpty else { note = "タイムラインとして読めませんでした。"; return }
+        if scoped { url.stopAccessingSecurityScopedResource() }
+        let spots = read.spots
+        guard !spots.isEmpty else { note = "タイムラインとして読めませんでした（\(read.why)）。"; return }
         timelineCount = spots.count
         note = "タイムラインを \(spots.count) 点読みました。場所の無い食事に位置を入れています…"
         let filled = await GoogleTimeline.fillMealLocations(spots, context: context)
@@ -261,6 +264,66 @@ extension SharedAlbums {
         return out
     }
 
+    /// 取り込みで、写真のまとまりをどうしたか（作る人のメニューで見直す。2026-11-28）
+    struct Logged: Codable, Identifiable, Equatable {
+        enum Kind: String, Codable { case added, made, notThere, noLocation, byHand }
+        var ids: [String]
+        var date: Date
+        var kind: Kind
+        var id: String { ids.first ?? "" }
+
+        var label: String {
+            switch kind {
+            case .added: return "自分の食事に足した"
+            case .made: return "一緒に食べた食事にした"
+            case .notThere: return "自分がいなかった"
+            case .noLocation: return "場所が無い"
+            case .byHand: return "手で入れた"
+            }
+        }
+        var skipped: Bool { kind == .notThere || kind == .noLocation }
+
+        private static var url: URL {
+            FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("uikyo-log.json")
+        }
+        static func load() -> [Logged] {
+            guard let data = try? Data(contentsOf: url) else { return [] }
+            return (try? JSONDecoder().decode([Logged].self, from: data)) ?? []
+        }
+        /// 前の記録に、新しい結果を上書きで足す（同じ写真のまとまりは新しいほう）
+        static func merged(_ old: [Logged], _ new: [Logged]) -> [Logged] {
+            var byID: [String: Logged] = [:]
+            for l in old + new { byID[l.id] = l }
+            return byID.values.sorted { $0.date > $1.date }
+        }
+        static func merge(_ new: [Logged]) {
+            let all = merged(load(), new)
+            try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            if let data = try? JSONEncoder().encode(all) { try? data.write(to: url, options: .atomic) }
+        }
+    }
+
+    /// 載せなかったまとまりを、本人が選んで自分の帖に入れる
+    @MainActor
+    static func addByHand(_ entry: Logged, context: ModelContext) async -> Bool {
+        var photos: [SeenPhoto] = []
+        for id in entry.ids {
+            guard let asset = PhotoLoader.asset(id) else { continue }
+            photos.append(await Scanner.shared.look(asset))
+        }
+        guard !photos.isEmpty else { return false }
+        let meal = await Scanner.shared.buildMeal(photos, all: photos, context: context, old: true)
+        if let meal, !meal.source.contains("+uikyo") { meal.source += "+uikyo" }
+        try? context.save()
+        var done = Set(UserDefaults.standard.stringArray(forKey: doneKey) ?? [])
+        done.formUnion(entry.ids)
+        UserDefaults.standard.set(Array(done), forKey: doneKey)
+        var hand = entry
+        hand.kind = .byHand
+        Logged.merge([hand])
+        return meal != nil
+    }
+
     struct ImportResult {
         var looked = 0
         var food = 0
@@ -295,6 +358,8 @@ extension SharedAlbums {
             if seen.food >= Matcher.foodThreshold { food.append(seen) }
         }
         result.food = food.count
+        var log: [Logged] = []
+        defer { Logged.merge(log) }
         let timeline = GoogleTimeline.load()
         let visits = VisitLog.load() + GoogleTimeline.visits(timeline)
         for group in groups(food) {
@@ -312,6 +377,7 @@ extension SharedAlbums {
                 meal.photoIDs.append(contentsOf: fresh)
                 result.addedToMeals += fresh.count
                 result.mealsTouched += 1
+                log.append(Logged(ids: ids, date: first.date, kind: .added))
                 if meal.latitude == nil, meal.place == nil, meal.spot.isEmpty, let spot {
                     meal.latitude = spot.latitude
                     meal.longitude = spot.longitude
@@ -329,16 +395,19 @@ extension SharedAlbums {
                                    + GoogleTimeline.points(timeline, from: first.date.addingTimeInterval(-thereWindow),
                                                            to: last.date.addingTimeInterval(thereWindow))) else {
                     result.notThere += group.count
+                    log.append(Logged(ids: ids, date: first.date, kind: .notThere))
                     continue
                 }
                 if let meal = await Scanner.shared.buildMeal(group, all: group, context: context, old: true) {
                     if !meal.source.contains("+uikyo") { meal.source += "+uikyo" }
                     result.newMeals += 1
+                    log.append(Logged(ids: ids, date: first.date, kind: .made))
                 }
                 done.formUnion(ids)
             } else {
                 // 3. 場所も無く、重なる食事も無い
                 result.noLocation += group.count
+                log.append(Logged(ids: ids, date: first.date, kind: .noLocation))
             }
             try? context.save()
             UserDefaults.standard.set(Array(done), forKey: doneKey)
@@ -347,5 +416,67 @@ extension SharedAlbums {
         UserDefaults.standard.set(Array(done), forKey: doneKey)
         Metrics.count("uikyoImports")
         return result
+    }
+}
+
+/// ういきょの取り込みの結果を見直す。載せなかったまとまりは「入れる」で自分の帖に入れられる
+struct UikyoReviewView: View {
+    @Environment(\.modelContext) private var context
+    @State private var all: [SharedAlbums.Logged] = []
+    @State private var onlySkipped = true
+    @State private var onlyAnniversary = false
+    @State private var busy: String?
+    @State private var days: [Anniversary] = []
+
+    private var shown: [SharedAlbums.Logged] {
+        all.filter { (!onlySkipped || $0.skipped) && (!onlyAnniversary || UikyoReviewView.near($0.date, days)) }
+    }
+
+    /// 記念日・誕生日の前後 3 日
+    static func near(_ date: Date, _ days: [Anniversary]) -> Bool {
+        (-3...3).contains { offset in
+            let parts = Calendar.current.dateComponents([.month, .day], from: date.addingTimeInterval(Double(offset) * 86_400))
+            return days.contains { $0.month == parts.month && $0.day == parts.day }
+        }
+    }
+
+    var body: some View {
+        List {
+            Section {
+                Toggle("載せなかったものだけ", isOn: $onlySkipped)
+                Toggle("記念日の前後 3 日だけ", isOn: $onlyAnniversary)
+                Text("\(shown.count) まとまり（全部で \(all.count)）").font(.caption).foregroundStyle(.secondary)
+            }
+            ForEach(shown) { entry in
+                HStack(spacing: 10) {
+                    PhotoThumb(id: entry.ids.first, side: 56)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(entry.date.formatted(.dateTime.year().month().day().hour().minute())).font(.subheadline)
+                        Text("\(entry.label)・\(entry.ids.count) 枚" + (UikyoReviewView.near(entry.date, days) ? "・記念日の頃" : ""))
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    if entry.skipped {
+                        if busy == entry.id {
+                            ProgressView()
+                        } else {
+                            Button("入れる") { Task { await add(entry) } }.buttonStyle(.bordered).disabled(busy != nil)
+                        }
+                    }
+                }
+            }
+        }
+        .navigationTitle("ういきょの取り込み")
+        .task {
+            days = Anniversary.all
+            all = await Task.detached { SharedAlbums.Logged.load() }.value
+        }
+    }
+
+    private func add(_ entry: SharedAlbums.Logged) async {
+        busy = entry.id
+        defer { busy = nil }
+        _ = await SharedAlbums.addByHand(entry, context: context)
+        all = await Task.detached { SharedAlbums.Logged.load() }.value
     }
 }
