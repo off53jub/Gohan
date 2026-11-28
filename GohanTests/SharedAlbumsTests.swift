@@ -61,3 +61,25 @@ final class SharedAlbumImportTests: XCTestCase {
         XCTAssertFalse(SharedAlbums.wasThere(latitude: 35.69, longitude: 139.70, from: t0, to: t0, visits: [], ownSpots: late))
     }
 }
+
+/// 2026-11-28 取り込みの見直し
+final class UikyoReviewTests: XCTestCase {
+    func testMergeKeepsNewest() {
+        let d = Date(timeIntervalSince1970: 1_700_000_000)
+        let old = [SharedAlbums.Logged(ids: ["a"], date: d, kind: .notThere), SharedAlbums.Logged(ids: ["b"], date: d.addingTimeInterval(60), kind: .added)]
+        let new = [SharedAlbums.Logged(ids: ["a"], date: d, kind: .byHand)]
+        let m = SharedAlbums.Logged.merged(old, new)
+        XCTAssertEqual(m.count, 2)
+        XCTAssertEqual(m.first { $0.id == "a" }?.kind, .byHand)
+        XCTAssertEqual(m.first?.id, "b")
+    }
+
+    func testNearAnniversary() {
+        var c = DateComponents()
+        c.year = 2025; c.month = 8; c.day = 3; c.hour = 19
+        let date = Calendar.current.date(from: c)!
+        let days = [Anniversary(name: "記念日", month: 8, day: 1)]
+        XCTAssertTrue(UikyoReviewView.near(date, days))
+        XCTAssertFalse(UikyoReviewView.near(date, [Anniversary(name: "誕生日", month: 8, day: 10)]))
+    }
+}
