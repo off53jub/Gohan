@@ -83,3 +83,17 @@ final class UikyoReviewTests: XCTestCase {
         XCTAssertFalse(UikyoReviewView.near(date, [Anniversary(name: "誕生日", month: 8, day: 10)]))
     }
 }
+
+/// 2026-11-28 場所の無い写真をタイムラインで補う
+final class UikyoLocatedTests: XCTestCase {
+    func testLocatedUsesTimelineStay() {
+        let t = Date(timeIntervalSince1970: 1_750_000_000)
+        let stay = GoogleTimeline.Spot(start: t.addingTimeInterval(-600), end: t.addingTimeInterval(3600), latitude: 43.06, longitude: 141.35, stay: true)
+        let none = SeenPhoto(id: "a", date: t, latitude: nil, longitude: nil, accuracy: nil, food: 0.9, label: "ramen")
+        let has = SeenPhoto(id: "b", date: t, latitude: 35.0, longitude: 139.0, accuracy: 5, food: 0.9, label: "ramen")
+        let out = SharedAlbums.located([none, has], timeline: [stay])
+        XCTAssertEqual(out[0].latitude, 43.06)
+        XCTAssertEqual(out[1].latitude, 35.0)
+        XCTAssertNil(SharedAlbums.located([none], timeline: [])[0].latitude)
+    }
+}
