@@ -1,6 +1,7 @@
 import Photos
 import SwiftData
 import SwiftUI
+import UniformTypeIdentifiers
 
 // 2026-11-28 「ういきょ」で始まる共有アルバムの、ごはんの写真を数える（取り込む前の試し）。
 // 数えるだけで、食事も写真も何も書き換えない。作る人のメニューにだけ出す。
@@ -78,6 +79,8 @@ struct SharedAlbumSection: View {
     @State private var total = 0
     @State private var note: String?
     @State private var job: Task<Void, Never>?
+    @State private var pickingTimeline = false
+    @State private var timelineCount = GoogleTimeline.load().count
 
     var body: some View {
         Section {
@@ -90,6 +93,7 @@ struct SharedAlbumSection: View {
             } else {
                 Button("ういきょのアルバムを数える") { job = Task { await count() } }
                 Button("ういきょのごはんを取り込む") { job = Task { await importNow() } }
+                Button("Google のタイムラインを読む（今 \(timelineCount) 点）") { pickingTimeline = true }
             }
             if let note { Text(note).font(.footnote).foregroundStyle(.secondary) }
             ForEach(tallies) { t in
@@ -106,9 +110,26 @@ struct SharedAlbumSection: View {
         } header: {
             Text("共有アルバム（試し・2026-11-28）")
         } footer: {
-            Text("数えるほうは、食事も写真も変えません。取り込むほうは、自分の食事の時間に重なる写真をその食事に足し、重ならない写真は、その時刻に自分も同じ所にいた（訪問の記録・自分の写真の場所が 300m 以内）ときだけ新しい食事にします。ういちゃんひとりの食事と、場所の無い写真は載せません。写真が多いと数分〜数十分かかります。")
+            Text("数えるほうは、食事も写真も変えません。取り込むほうは、自分の食事の時間に重なる写真をその食事に足し、重ならない写真は、その時刻に自分も同じ所にいた（訪問の記録・Google のタイムライン・自分の写真の場所が 300m 以内）ときだけ新しい食事にします。ういちゃんひとりの食事と、場所の無い写真は載せません。写真が多いと数分〜数十分かかります。")
         }
         .onDisappear { job?.cancel() }
+        .fileImporter(isPresented: $pickingTimeline, allowedContentTypes: [.json]) { picked in
+            guard case .success(let url) = picked else { return }
+            let scoped = url.startAccessingSecurityScopedResource()
+            let data = try? Data(contentsOf: url)
+            if scoped { url.stopAccessingSecurityScopedResource() }
+            let spots = data.map(GoogleTimeline.parse) ?? []
+            guard !spots.isEmpty else { note = "タイムラインとして読めませんでした。"; return }
+            GoogleTimeline.save(spots)
+            timelineCount = spots.count
+            job = Task {
+                running = true
+                defer { running = false }
+                note = "タイムラインを \(spots.count) 点読みました。場所の無い食事に位置を入れています…"
+                let filled = await GoogleTimeline.fillMealLocations(spots, context: context)
+                note = "タイムラインを \(spots.count) 点読み、場所の無い食事 \(filled) 食に位置を入れました。ういきょの取り込みでも使います。"
+            }
+        }
     }
 
     private func importNow() async {
@@ -268,7 +289,8 @@ extension SharedAlbums {
             if seen.food >= Matcher.foodThreshold { food.append(seen) }
         }
         result.food = food.count
-        let visits = VisitLog.load()
+        let timeline = GoogleTimeline.load()
+        let visits = VisitLog.load() + GoogleTimeline.visits(timeline)
         for group in groups(food) {
             if Task.isCancelled { break }
             guard let first = group.first, let last = group.last else { continue }
@@ -297,7 +319,9 @@ extension SharedAlbums {
             } else if let spot {
                 // 2. 本人もそこにいたなら、一緒に食べた食事として作る
                 guard wasThere(latitude: spot.latitude, longitude: spot.longitude, from: first.date, to: last.date,
-                               visits: visits, ownSpots: ownSpots(from: first.date, to: last.date)) else {
+                               visits: visits, ownSpots: ownSpots(from: first.date, to: last.date)
+                                   + GoogleTimeline.points(timeline, from: first.date.addingTimeInterval(-thereWindow),
+                                                           to: last.date.addingTimeInterval(thereWindow))) else {
                     result.notThere += group.count
                     continue
                 }
