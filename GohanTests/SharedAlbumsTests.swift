@@ -97,3 +97,23 @@ final class UikyoLocatedTests: XCTestCase {
         XCTAssertNil(SharedAlbums.located([none], timeline: [])[0].latitude)
     }
 }
+
+/// 2026-11-28 場所の無い写真で、距離の分からないお店を選ばない
+final class FarPickTests: XCTestCase {
+    private func shop(_ name: String, distance: Double, score: Double, text: Double = 0) -> PlaceCandidate {
+        var c = PlaceCandidate(name: name, address: "", category: "MKPOICategoryRestaurant", latitude: 35, longitude: 139, distance: distance)
+        c.score = score
+        c.textHit = text
+        return c
+    }
+
+    func testUnknownDistanceIsNotPickedOnDevice() {
+        XCTAssertNil(Matcher.decideOnDevice([shop("一風堂", distance: PlaceCandidate.unknownDistance, score: 0.5)]).pick)
+        XCTAssertNotNil(Matcher.decideOnDevice([shop("一風堂", distance: PlaceCandidate.unknownDistance, score: 0.9, text: 0.95)]).pick)
+        XCTAssertNotNil(Matcher.decideOnDevice([shop("一風堂", distance: 30, score: 0.5)]).pick)
+    }
+
+    func testReasonHidesUnknownDistance() {
+        XCTAssertEqual(Matcher.reason(for: shop("一風堂", distance: PlaceCandidate.unknownDistance, score: 0.5), source: "device", receipt: false), "")
+    }
+}

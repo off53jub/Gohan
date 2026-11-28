@@ -334,6 +334,8 @@ enum Matcher {
     /// AI を使わないときの決め方。1位が2位より十分高いときだけ自信を高くする
     static func decideOnDevice(_ ranked: [PlaceCandidate]) -> (pick: PlaceCandidate?, confidence: Double) {
         guard let top = ranked.first else { return (nil, 0) }
+        // 写真に場所が無く距離の分からないお店は、看板の文字が合っていなければ端末だけでは選ばない（2026-11-28）
+        if top.distance >= PlaceCandidate.unknownDistance, top.textHit < 0.9 { return (nil, 0) }
         let second = ranked.dropFirst().first?.score ?? 0
         let margin = top.score - second
         let confidence = min(1, top.score * 0.7 + margin * 1.2)

@@ -72,6 +72,7 @@ final class Scanner {
         let context = container.mainContext
         let allMeals = (try? context.fetch(FetchDescriptor<Meal>())) ?? []
         fixOldGenres(allMeals)
+        Self.dropFarPicks(allMeals)
         dishBook = Matcher.dishBook(allMeals.map(\.dishes))
 
         var seen = SeenStore.load()
@@ -164,6 +165,21 @@ final class Scanner {
 
     /// 前の版で、端末だけで決めたジャンル（ラーメンが「スープ」「パスタ」など）を、お店の名前から1回だけ直す。
     /// 本人が直したもの（ジャンルが写真の判定と違うもの）は触らない（2026-11-24）
+    /// 場所の無い写真なのに、距離の分からないお店を「いちばん近い」として入れてしまった食事を、お店なしに戻す（2026-11-28）
+    @discardableResult
+    static func dropFarPicks(_ meals: [Meal]) -> Int {
+        var n = 0
+        for meal in meals where meal.reason.contains("（99999m）") {
+            meal.place = nil
+            meal.confidence = 0
+            meal.needsCheck = false
+            meal.reason = ""
+            n += 1
+        }
+        for _ in 0..<n { Metrics.count("farPicksDropped") }
+        return n
+    }
+
     private func fixOldGenres(_ meals: [Meal]) {
         guard !UserDefaults.standard.bool(forKey: "fix.genre.v1") else { return }
         UserDefaults.standard.set(true, forKey: "fix.genre.v1")
