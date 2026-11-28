@@ -80,7 +80,7 @@ struct SharedAlbumSection: View {
     @State private var note: String?
     @State private var job: Task<Void, Never>?
     @State private var pickingTimeline = false
-    @State private var timelineCount = GoogleTimeline.load().count
+    @State private var timelineCount = 0
 
     var body: some View {
         Section {
@@ -112,24 +112,30 @@ struct SharedAlbumSection: View {
         } footer: {
             Text("数えるほうは、食事も写真も変えません。取り込むほうは、自分の食事の時間に重なる写真をその食事に足し、重ならない写真は、その時刻に自分も同じ所にいた（訪問の記録・Google のタイムライン・自分の写真の場所が 300m 以内）ときだけ新しい食事にします。ういちゃんひとりの食事と、場所の無い写真は載せません。写真が多いと数分〜数十分かかります。")
         }
+        .task { timelineCount = await Task.detached { GoogleTimeline.load().count }.value }
         .onDisappear { job?.cancel() }
         .fileImporter(isPresented: $pickingTimeline, allowedContentTypes: [.json]) { picked in
             guard case .success(let url) = picked else { return }
-            let scoped = url.startAccessingSecurityScopedResource()
-            let data = try? Data(contentsOf: url)
-            if scoped { url.stopAccessingSecurityScopedResource() }
-            let spots = data.map(GoogleTimeline.parse) ?? []
-            guard !spots.isEmpty else { note = "タイムラインとして読めませんでした。"; return }
-            GoogleTimeline.save(spots)
-            timelineCount = spots.count
-            job = Task {
-                running = true
-                defer { running = false }
-                note = "タイムラインを \(spots.count) 点読みました。場所の無い食事に位置を入れています…"
-                let filled = await GoogleTimeline.fillMealLocations(spots, context: context)
-                note = "タイムラインを \(spots.count) 点読み、場所の無い食事 \(filled) 食に位置を入れました。ういきょの取り込みでも使います。"
-            }
+            job = Task { await readTimeline(url) }
         }
+    }
+
+    private func readTimeline(_ url: URL) async {
+        running = true
+        defer { running = false }
+        let spots = await Task.detached { () -> [GoogleTimeline.Spot] in
+            let scoped = url.startAccessingSecurityScopedResource()
+            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+            guard let data = try? Data(contentsOf: url) else { return [] }
+            let spots = GoogleTimeline.parse(data)
+            if !spots.isEmpty { GoogleTimeline.save(spots) }
+            return spots
+        }.value
+        guard !spots.isEmpty else { note = "タイムラインとして読めませんでした。"; return }
+        timelineCount = spots.count
+        note = "タイムラインを \(spots.count) 点読みました。場所の無い食事に位置を入れています…"
+        let filled = await GoogleTimeline.fillMealLocations(spots, context: context)
+        note = "タイムラインを \(spots.count) 点読み、場所の無い食事 \(filled) 食に位置を入れました。ういきょの取り込みでも使います。"
     }
 
     private func importNow() async {
