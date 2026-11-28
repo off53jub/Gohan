@@ -49,7 +49,9 @@ struct WantView: View {
                         EmptyArt(title: "また行きたいお店はまだありません",
                                  message: "記録のハートを押すか、右上の「＋」で行ってみたいお店を足せます。")
                     }
-                    NavigationLink("行ったお店ぜんぶを見る") { PlacesListView() }
+                    // 行き先は path に積む（中身を直接書く行き先だと、一覧の中のお店を開いたときに
+                    // 画面が開き直しをくり返した。2026-11-28）
+                    NavigationLink("行ったお店ぜんぶを見る", value: AllPlacesRoute())
                         .font(.subheadline).foregroundStyle(Ink.ai)
                         .frame(minHeight: 44)
                 }
@@ -65,6 +67,7 @@ struct WantView: View {
             .navigationBarTitleDisplayMode(.inline)
             .navigationDestination(for: Place.self) { PlaceDetailView(place: $0) }
             .navigationDestination(for: Meal.self) { MealDetailView(meal: $0) }
+            .navigationDestination(for: AllPlacesRoute.self) { _ in PlacesListView() }
             .sheet(isPresented: $adding) { AddWishView() }
             .task {
                 if LocationWatch.shared.status == .authorizedWhenInUse || LocationWatch.shared.status == .authorizedAlways {
@@ -233,6 +236,9 @@ struct WantRow: View {
         return parts.joined(separator: "・")
     }
 }
+
+/// 「行ったお店ぜんぶ」へ行く印（NavigationPath に積む）
+struct AllPlacesRoute: Hashable {}
 
 /// 行ったお店ぜんぶ（さがす・しぼる）
 struct PlacesListView: View {
