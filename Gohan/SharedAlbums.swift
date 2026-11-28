@@ -111,7 +111,7 @@ struct SharedAlbumSection: View {
         } header: {
             Text("共有アルバム（試し・2026-11-28）")
         } footer: {
-            Text("数えるほうは、食事も写真も変えません。取り込むほうは、自分の食事の時間に重なる写真をその食事に足し、重ならない写真は、その時刻に自分も同じ所にいた（訪問の記録・Google のタイムライン・自分の写真の場所が 300m 以内）ときだけ新しい食事にします。ういちゃんひとりの食事と、場所の無い写真は載せません。写真が多いと数分〜数十分かかります。")
+            Text("数えるほうは、食事も写真も変えません。取り込むほうは、自分の食事の時間に重なる写真をその食事に足し、重ならない写真は新しい食事にします（ういきょの写真は自分もいた食事として扱う）。場所の無い写真は、Google のタイムラインのその時刻の滞在先を使います。写真が多いと数分〜数十分かかります。")
         }
         .task { timelineCount = await Task.detached { GoogleTimeline.load().count }.value }
         .onDisappear { job?.cancel() }
@@ -153,7 +153,7 @@ struct SharedAlbumSection: View {
         note = "見た \(r.looked) 枚（前に取り込み済み \(r.already)）・ごはん \(r.food) 枚。"
             + "自分の食事 \(r.mealsTouched) 食に写真を \(r.addedToMeals) 枚足し、うち \(r.locationsAdded) 食に場所を入れました。"
             + "一緒に食べた食事を \(r.newMeals) 食つくりました。"
-            + "自分がいなかった写真 \(r.notThere) 枚・場所の無い写真 \(r.noLocation) 枚は載せていません。"
+            + "うち場所の無い写真 \(r.noLocation) 枚は、タイムラインの滞在先で補いました。"
             + (Task.isCancelled ? "（途中でやめました）" : "")
     }
 
@@ -312,6 +312,7 @@ extension SharedAlbums {
             photos.append(await Scanner.shared.look(asset))
         }
         guard !photos.isEmpty else { return false }
+        photos = located(photos, timeline: GoogleTimeline.load())
         let meal = await Scanner.shared.buildMeal(photos, all: photos, context: context, old: true)
         if let meal, !meal.source.contains("+uikyo") { meal.source += "+uikyo" }
         try? context.save()
@@ -322,6 +323,18 @@ extension SharedAlbums {
         hand.kind = .byHand
         Logged.merge([hand])
         return meal != nil
+    }
+
+    /// 場所の無い写真に、その時刻の Google のタイムラインの滞在先を入れる
+    static func located(_ group: [SeenPhoto], timeline: [GoogleTimeline.Spot]) -> [SeenPhoto] {
+        group.map { p in
+            guard p.latitude == nil, let s = GoogleTimeline.stay(at: p.date, in: timeline) else { return p }
+            var q = p
+            q.latitude = s.latitude
+            q.longitude = s.longitude
+            q.accuracy = 100
+            return q
+        }
     }
 
     struct ImportResult {
@@ -388,26 +401,17 @@ extension SharedAlbums {
                 }
                 if !meal.source.contains("+uikyo") { meal.source += "+uikyo" }
                 done.formUnion(ids)
-            } else if let spot {
-                // 2. 本人もそこにいたなら、一緒に食べた食事として作る
-                guard wasThere(latitude: spot.latitude, longitude: spot.longitude, from: first.date, to: last.date,
-                               visits: visits, ownSpots: ownSpots(from: first.date, to: last.date)
-                                   + GoogleTimeline.points(timeline, from: first.date.addingTimeInterval(-thereWindow),
-                                                           to: last.date.addingTimeInterval(thereWindow))) else {
-                    result.notThere += group.count
-                    log.append(Logged(ids: ids, date: first.date, kind: .notThere))
-                    continue
-                }
-                if let meal = await Scanner.shared.buildMeal(group, all: group, context: context, old: true) {
+            } else {
+                // 2. 重なる食事が無くても、ういきょの写真は本人もいた食事（2026-11-28 本人「全部俺いる」）。
+                //    写真に場所が無ければ、Google のタイムラインのその時刻の滞在先を使う
+                let photos = located(group, timeline: timeline)
+                if let meal = await Scanner.shared.buildMeal(photos, all: photos, context: context, old: true) {
                     if !meal.source.contains("+uikyo") { meal.source += "+uikyo" }
                     result.newMeals += 1
+                    if spot == nil { result.noLocation += group.count }
                     log.append(Logged(ids: ids, date: first.date, kind: .made))
                 }
                 done.formUnion(ids)
-            } else {
-                // 3. 場所も無く、重なる食事も無い
-                result.noLocation += group.count
-                log.append(Logged(ids: ids, date: first.date, kind: .noLocation))
             }
             try? context.save()
             UserDefaults.standard.set(Array(done), forKey: doneKey)
@@ -427,6 +431,8 @@ struct UikyoReviewView: View {
     @State private var onlyAnniversary = false
     @State private var busy: String?
     @State private var days: [Anniversary] = []
+    @State private var progress: Int?
+    @State private var job: Task<Void, Never>?
 
     private var shown: [SharedAlbums.Logged] {
         all.filter { (!onlySkipped || $0.skipped) && (!onlyAnniversary || UikyoReviewView.near($0.date, days)) }
@@ -446,6 +452,15 @@ struct UikyoReviewView: View {
                 Toggle("載せなかったものだけ", isOn: $onlySkipped)
                 Toggle("記念日の前後 3 日だけ", isOn: $onlyAnniversary)
                 Text("\(shown.count) まとまり（全部で \(all.count)）").font(.caption).foregroundStyle(.secondary)
+                let rest = shown.filter(\.skipped)
+                if !rest.isEmpty {
+                    if let progress {
+                        Text("入れています \(progress) / \(rest.count)")
+                    } else {
+                        Button("載せなかった \(rest.count) まとまりを全部入れる") { job = Task { await addAll(rest) } }
+                            .disabled(busy != nil)
+                    }
+                }
             }
             ForEach(shown) { entry in
                 HStack(spacing: 10) {
@@ -467,10 +482,22 @@ struct UikyoReviewView: View {
             }
         }
         .navigationTitle("ういきょの取り込み")
+        .onDisappear { job?.cancel() }
         .task {
             days = Anniversary.all
             all = await Task.detached { SharedAlbums.Logged.load() }.value
         }
+    }
+
+    private func addAll(_ list: [SharedAlbums.Logged]) async {
+        progress = 0
+        defer { progress = nil }
+        for (i, entry) in list.enumerated() {
+            if Task.isCancelled { break }
+            progress = i + 1
+            _ = await SharedAlbums.addByHand(entry, context: context)
+        }
+        all = await Task.detached { SharedAlbums.Logged.load() }.value
     }
 
     private func add(_ entry: SharedAlbums.Logged) async {
