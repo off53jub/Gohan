@@ -81,6 +81,7 @@ struct SharedAlbumSection: View {
     @State private var job: Task<Void, Never>?
     @State private var pickingTimeline = false
     @State private var timelineCount = 0
+    @State private var auto = SharedAlbums.auto
 
     var body: some View {
         Section {
@@ -94,6 +95,8 @@ struct SharedAlbumSection: View {
                 Button("ういきょのアルバムを数える") { job = Task { await count() } }
                 Button("ういきょのごはんを取り込む") { job = Task { await importNow() } }
                 NavigationLink("取り込みの結果を見直す") { UikyoReviewView() }
+                Toggle("この iPhone で、新しいういきょのごはんを自動で取り込む", isOn: $auto)
+                    .onChange(of: auto) { _, new in SharedAlbums.auto = new }
                 Button("Google のタイムラインを読む（今 \(timelineCount) 点）") { pickingTimeline = true }
             }
             if let note { Text(note).font(.footnote).foregroundStyle(.secondary) }
@@ -216,6 +219,28 @@ extension SharedAlbums {
     static let thereDistance = 300.0
     static let thereWindow: TimeInterval = 60 * 60
     static let doneKey = "sharedAlbum.imported"
+    /// ごはんではなかった写真（次から見直さない）
+    static let lookedKey = "sharedAlbum.looked"
+
+    /// この iPhone で、新しく載ったういきょのごはんを自動で取り込む（作る人のメニューでオンにした端末だけ。ういちゃんの iPhone では動かない）
+    static var auto: Bool {
+        get { UserDefaults.standard.bool(forKey: "sharedAlbum.auto") }
+        set { UserDefaults.standard.set(newValue, forKey: "sharedAlbum.auto") }
+    }
+    static var lastAuto: Date? {
+        get { UserDefaults.standard.object(forKey: "sharedAlbum.lastAuto") as? Date }
+        set { UserDefaults.standard.set(newValue, forKey: "sharedAlbum.lastAuto") }
+    }
+
+    /// 写真を読むたびに呼ぶ（6 時間に 1 回まで。写真へのアクセスが「すべて」のときだけ）
+    @MainActor
+    static func autoImport(context: ModelContext, now: Date = Date()) async {
+        guard auto, PHPhotoLibrary.authorizationStatus(for: .readWrite) == .authorized,
+              (lastAuto.map { now.timeIntervalSince($0) > 6 * 3600 } ?? true) else { return }
+        lastAuto = now
+        let r = await importFood(context: context) { _, _ in }
+        if r.mealsTouched + r.newMeals > 0 { Metrics.count("uikyoAutoImports") }
+    }
 
     /// 時間と場所が近い写真を 1 回の食事にまとめる
     static func groups(_ photos: [SeenPhoto]) -> [[SeenPhoto]] {
@@ -353,6 +378,8 @@ extension SharedAlbums {
     static func importFood(context: ModelContext, progress: @escaping @MainActor (Int, Int) -> Void) async -> ImportResult {
         var result = ImportResult()
         var done = Set(UserDefaults.standard.stringArray(forKey: doneKey) ?? [])
+        var looked = Set(UserDefaults.standard.stringArray(forKey: lookedKey) ?? [])
+        defer { UserDefaults.standard.set(Array(looked), forKey: lookedKey) }
         var assets: [PHAsset] = []
         for album in albums() {
             let options = PHFetchOptions()
@@ -366,9 +393,9 @@ extension SharedAlbums {
             if Task.isCancelled { return result }
             progress(i + 1, assets.count)
             result.looked += 1
-            if done.contains(asset.localIdentifier) { result.already += 1; continue }
+            if done.contains(asset.localIdentifier) || looked.contains(asset.localIdentifier) { result.already += 1; continue }
             let seen = await Scanner.shared.look(asset)
-            if seen.food >= Matcher.foodThreshold { food.append(seen) }
+            if seen.food >= Matcher.foodThreshold { food.append(seen) } else { looked.insert(asset.localIdentifier) }
         }
         result.food = food.count
         var log: [Logged] = []

@@ -132,6 +132,9 @@ final class Scanner {
         Habits.refresh(context: context)
         MonthlyNote.sendIfDue(context: context)
 
+        // 3.55 ういきょの共有アルバムの新しいごはん（オンにした iPhone だけ。2026-11-28）
+        await SharedAlbums.autoImport(context: context)
+
         // 3.6 ホーム画面の小窓（大19）
         await WidgetFeed.write(context: context)
 
